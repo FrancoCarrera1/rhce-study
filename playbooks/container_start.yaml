@@ -2,7 +2,8 @@
   hosts: fcvault
   tasks:
     - name: Echo Command when containers are down
-      ansibl.builtin.command: /bin/echo "docker start beautiful_gould; docker start watchtower ; docker start vaultwarden"
+      ansible.builtin.command: >
+        /bin/echo "docker start beautiful_gould; docker start watchtower ; docker start vaultwarden"
       register: response
     - name: Print result
       ansible.builtin.debug:
