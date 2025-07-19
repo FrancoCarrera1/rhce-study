@@ -7,4 +7,10 @@
       register: response
     - name: Print result
       ansible.builtin.debug:
-        var: response
+        var: responsej
+    - name: Check if containers are running
+      ansible.builtin.command: docker ps -a
+      register: docker_ps
+    - name: Print Status
+      ansible.builtin.debug:
+        var: docker_ps
