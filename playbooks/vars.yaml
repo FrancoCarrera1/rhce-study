@@ -3,10 +3,10 @@
     msg_name: Hello World!
 
   tasks:
-  - name: Echoing Vars
-    ansible.builtin.command: /bin/echo "{{msg_name}} this is me using a variable"
-    register: response
+    - name: Echoing Vars
+      ansible.builtin.command: /bin/echo "{{msg_name}} this is me using a variable"
+      register: response
 
-  - name: Print result
-    ansible.builtin.debug:
-     vars: response                                                                                                                                                                                                                          var: response
+    - name: Print result
+      ansible.builtin.debug:
+        vars: response
