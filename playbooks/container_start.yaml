@@ -6,7 +6,7 @@
       register: containers_status
     - name: Start Containers when stopped
       ansible.builtin.command: /bin/echo "docker start beautiful_gould ; docker start watchtower ; docker start vaultwarden"
-      when: containers_status.stdout.find('stopped')
+      when: containers_status.stdout.find('stopped') != -1
     - name: Check if containers are running
       ansible.builtin.command: docker ps -a
       register: docker_ps
