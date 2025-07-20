@@ -12,4 +12,4 @@
       register: docker_ps
     - name: Print Status
       ansible.builtin.debug:
-        var: containers_status
+        var: docker_ps
