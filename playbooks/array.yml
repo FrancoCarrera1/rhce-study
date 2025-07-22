@@ -4,4 +4,4 @@
     - name: Print array
       ansible.builtin.debug:
         msg: "{{ item }}"
-      loop: "['one', 'two', 'three']"
+      loop: ["one", "two", "three"]
