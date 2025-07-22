@@ -1,0 +1,7 @@
+- name: Testing an array
+  hosts: ajo
+  tasks:
+    - name: Print array
+      ansible.builtin.debug:
+        msg: "{{ item }}"
+        loop: "['one', 'two', 'three']"
