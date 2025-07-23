@@ -4,6 +4,8 @@
     - name: Echo Vars
       ansible.builtin.command: /bin/echo "Hello World! {{ item }}"
       loop: ["Angelica", "Franco"]
+      loop_control:
+        pause: 5
       register: response
     - name: Print result
       ansible.builtin.debug:
