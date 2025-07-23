@@ -1,5 +1,12 @@
 - name: Create Ansible User
   hosts: all
+  vars:
+    ansible_password: !vault | 
+    $ANSIBLE_VAULT;1.1;AES256
+    37373638363061656361376361313339616135323534363439663765306566386161616230616363
+    3833633839653036386564373132386462316536616638320a633732613762323536636263653161
+    32626437316334346435663061313138333566323664623034653861626337376463373939383661
+    3937333631616665300a35323038396431363566376461633466306132386335336161636637653
   become: root
   tasks:
     - name: Create Ansible User on hosts
@@ -9,6 +16,6 @@
     - name: add sudo group rights for deployment user
       lineinfile:
         dest: /etc/sudoers.d/ansible
-        regexp: "^ansible-devops"
+        regexp: "^ansible"
         line: "ansible ALL=(ALL) NOPASSWD: ALL"
         state: present
