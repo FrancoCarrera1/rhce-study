@@ -1,0 +1,14 @@
+- name: Create Ansible User
+  hosts: all
+  become: root
+  tasks:
+    - name: Create Ansible User on hosts
+      ansible.builtin.user:
+      name: ansible 
+      password: 
+    - name: add sudo group rights for deployment user
+      lineinfile:
+        dest: /etc/sudoers.d/ansible
+        regexp: "^ansible-devops"
+        line: "ansible ALL=(ALL) NOPASSWD: ALL"
+        state: present
