@@ -2,7 +2,7 @@
   hosts: ajo
   tasks:
     - name: Echo Vars
-      ansible.builtin.command: /bin/echo "Hello World! "{{ item }}"
+      ansible.builtin.command: /bin/echo "Hello World! {{ item }}"
       loop: ["Angelica", "Franco"]
       register: response
     - name: Print result
