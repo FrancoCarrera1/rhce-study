@@ -12,7 +12,7 @@
     - name: Create Ansible User on hosts
       ansible.builtin.user:
       name: ansible 
-      password: 
+      password: "{{ ansible_password }}"
     - name: add sudo group rights for deployment user
       lineinfile:
         dest: /etc/sudoers.d/ansible
