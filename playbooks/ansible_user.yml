@@ -8,8 +8,8 @@
         password: "{{ ansible_password }}"
     - name: add sudo group rights for deployment user
       lineinfile:
-        create: ansible
-        path: /etc/sudoers.d
+        create: true
+        path: /etc/sudoers.d/ansible
         regexp: "^ansible"
         line: "ansible ALL=(ALL) NOPASSWD: ALL"
         state: present
