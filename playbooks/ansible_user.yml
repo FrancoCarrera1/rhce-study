@@ -1,6 +1,6 @@
 - name: Create Ansible User
   hosts: all
-  beocome: true
+  become: true
   tasks:
     - name: Create Ansible User on hosts
       ansible.builtin.user:
