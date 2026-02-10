@@ -1,0 +1,1 @@
+{"rsync":{"/vagrant":{"type":"rsync","guestpath":"/vagrant","hostpath":"C:/Users/LOSMO/Documents/rhce-study","disabled":false,"__vagrantfile":true,"owner":"vagrant","group":"vagrant"}}}
