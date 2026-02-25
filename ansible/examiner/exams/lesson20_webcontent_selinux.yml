@@ -1,0 +1,462 @@
+---
+id: lesson20_webcontent_selinux
+title: "Lesson 20: Web Content & SELinux"
+duration: 3600
+passing_score: 80
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [webservers]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [webservers]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [dbservers]
+
+tasks:
+  # ── Task 1: Web Directory Setup ──
+  - id: "1"
+    title: "Web Directory Setup"
+    points: 1
+    description: |
+      A common Ansible pattern is creating a shared web development directory
+      with specific ownership and permissions. The setgid bit (mode 2775) is the
+      key detail — it ensures any new files created inside the directory inherit
+      the directory's group, making collaboration seamless.
+
+      The setgid mode '2775' decoded:
+        2    — setgid bit. New files/directories inherit the parent's group.
+        7    — owner rwx (read, write, execute)
+        7    — group rwx (read, write, execute)
+        5    — other r-x (read, execute — no write)
+
+      Without setgid, files created inside inherit the creating user's primary
+      group. With setgid, they inherit the directory's group (webdev). This is
+      essential when multiple users share a web content directory.
+
+      Create /home/vagrant/ansible/webdev_setup.yml that creates the webdev group
+      and the /webdev directory with the correct ownership and permissions:
+
+        ---
+        - name: Set up web development directory
+          hosts: webservers
+          become: true
+          tasks:
+            - name: Create webdev group
+              ansible.builtin.group:
+                name: webdev
+                state: present
+
+            - name: Create /webdev directory
+              ansible.builtin.file:
+                path: /webdev
+                state: directory
+                owner: root
+                group: webdev
+                mode: '2775'
+
+            - name: Verify directory permissions
+              ansible.builtin.command:
+                cmd: ls -ld /webdev
+              register: dir_check
+              changed_when: false
+
+            - name: Show directory info
+              ansible.builtin.debug:
+                var: dir_check.stdout
+
+      Key points:
+        - The group module creates the OS group if it does not exist. It is
+          idempotent — running it twice does not create duplicates.
+        - mode: '2775' uses the octal notation with a leading digit for the
+          special bits. Always quote the mode value to prevent YAML from
+          interpreting it as a decimal number (2775 decimal != 02775 octal).
+        - The owner is root but the group is webdev. Members of webdev can
+          write to the directory but non-members cannot.
+
+      Run a syntax check:
+        cd /home/vagrant/ansible
+        ansible-playbook --syntax-check webdev_setup.yml
+
+      Run the playbook and verify:
+        ansible-playbook webdev_setup.yml
+        ansible webservers -m command -a "ls -ld /webdev"
+
+      Expected output:
+        drwxrwsr-x. 2 root webdev 6 ... /webdev
+                 ^
+                 The 's' in the group execute position indicates setgid is set.
+
+      Tip: The 's' in the permissions output (drwxrws---) confirms setgid
+      is active. If you see 'S' (capital), it means setgid is set but the group
+      execute bit is NOT set — that is usually wrong. You want lowercase 's'.
+    checks:
+      - id: "1.1"
+        description: "webdev_setup.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/webdev_setup.yml"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "webdev_setup.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check webdev_setup.yml"
+        expect_rc: 0
+
+      - id: "1.3"
+        description: "/webdev directory exists on node1"
+        node: node1
+        command: "test -d /webdev"
+        expect_rc: 0
+
+      - id: "1.4"
+        description: "/webdev is owned by the webdev group on node1"
+        node: node1
+        command: "stat -c '%G' /webdev"
+        expect_stdout: "webdev"
+
+      - id: "1.5"
+        description: "/webdev has setgid bit set on node1"
+        node: node1
+        command: "stat -c '%a' /webdev"
+        expect_stdout: "2775"
+
+      - id: "1.6"
+        description: "webdev group exists on node1"
+        node: node1
+        command: "getent group webdev"
+        expect_rc: 0
+
+  # ── Task 2: SELinux Context ──
+  - id: "2"
+    title: "SELinux Context"
+    points: 1
+    description: |
+      SELinux (Security-Enhanced Linux) uses mandatory access control labels
+      called contexts. Every file and process has a context. For Apache (httpd)
+      to serve a file, that file's context must be httpd_sys_content_t.
+
+      If you create a directory outside of /var/www/, Apache will be blocked by
+      SELinux even if the file permissions allow access. Setting the correct
+      SELinux context is mandatory for web content in non-standard locations.
+
+      The two-step approach used in Ansible:
+
+        Step 1 — Set the persistent policy with ansible.posix.sefcontext:
+          This writes a rule to the SELinux policy database (equivalent to
+          'semanage fcontext -a -t httpd_sys_content_t "/webdev(/.*)?"' on the
+          command line). This rule survives relabeling.
+
+        Step 2 — Apply the policy to existing files with restorecon:
+          The sefcontext module only updates the policy database — it does NOT
+          relabel existing files. You must run restorecon (via the command module
+          or ansible.builtin.command) to apply the new policy to files that
+          already exist.
+
+      Create /home/vagrant/ansible/selinux_context.yml:
+
+        ---
+        - name: Set SELinux context for /webdev
+          hosts: webservers
+          become: true
+          tasks:
+            - name: Set httpd_sys_content_t context on /webdev
+              ansible.posix.sefcontext:
+                target: '/webdev(/.*)?'
+                setype: httpd_sys_content_t
+                state: present
+
+            - name: Apply SELinux context to /webdev with restorecon
+              ansible.builtin.command:
+                cmd: restorecon -Rv /webdev
+              changed_when: true
+
+            - name: Verify SELinux context on /webdev
+              ansible.builtin.command:
+                cmd: ls -lZd /webdev
+              register: context_check
+              changed_when: false
+
+            - name: Show SELinux context
+              ansible.builtin.debug:
+                var: context_check.stdout
+
+      The target pattern '/webdev(/.*)?' uses a regular expression:
+        /webdev     — matches the /webdev directory itself
+        (/.*)?      — optionally matches any file or subdirectory inside it
+      This ensures all future files created in /webdev inherit the correct context.
+
+      The ansible.posix collection must be installed. Verify with:
+        ansible-galaxy collection list | grep posix
+
+      If not present, install it:
+        ansible-galaxy collection install ansible.posix
+
+      Run a syntax check:
+        cd /home/vagrant/ansible
+        ansible-playbook --syntax-check selinux_context.yml
+
+      Verify the context after running the playbook:
+        ansible webservers -m command -a "ls -lZd /webdev"
+
+      Expected output will include 'httpd_sys_content_t' in the context field:
+        drwxrwsr-x. root webdev system_u:object_r:httpd_sys_content_t:s0 /webdev
+
+      Tip: The sefcontext module requires the 'policycoreutils-python-utils'
+      package on the managed nodes. If the module fails with a missing 'semanage'
+      error, install that package first:
+        ansible webservers -m dnf -a "name=policycoreutils-python-utils state=present" -b
+    checks:
+      - id: "2.1"
+        description: "selinux_context.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/selinux_context.yml"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "selinux_context.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check selinux_context.yml"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "selinux_context.yml uses the sefcontext module"
+        node: control
+        command: "grep -q 'sefcontext' /home/vagrant/ansible/selinux_context.yml"
+        expect_rc: 0
+
+      - id: "2.4"
+        description: "/webdev has httpd_sys_content_t SELinux context on node1"
+        node: node1
+        command: "ls -lZd /webdev | grep -q 'httpd_sys_content_t'"
+        expect_rc: 0
+
+      - id: "2.5"
+        description: "selinux_context.yml runs restorecon"
+        node: control
+        command: "grep -q 'restorecon' /home/vagrant/ansible/selinux_context.yml"
+        expect_rc: 0
+
+  # ── Task 3: Symlinks and Content ──
+  - id: "3"
+    title: "Symlinks and Content"
+    points: 1
+    description: |
+      After setting up /webdev with the correct permissions and SELinux context,
+      you need to make it accessible via Apache. The clean approach is a symlink
+      from Apache's document root into /webdev, rather than moving files.
+
+      A symlink in /var/www/html/ pointing to /webdev allows Apache to serve
+      content from /webdev using its normal document root path. However, Apache's
+      default configuration does NOT follow symlinks into directories with
+      different SELinux contexts unless the boolean httpd_enable_homedirs or
+      httpd_use_nfs (or similar) is set. We handle that in Task 4.
+
+      Create /home/vagrant/ansible/webdev_content.yml:
+
+        ---
+        - name: Create symlink and deploy web content
+          hosts: webservers
+          become: true
+          tasks:
+            - name: Create symlink from /var/www/html/webdev to /webdev
+              ansible.builtin.file:
+                src: /webdev
+                dest: /var/www/html/webdev
+                state: link
+                owner: root
+                group: root
+
+            - name: Create index.html with Development content
+              ansible.builtin.copy:
+                content: "Development"
+                dest: /webdev/index.html
+                owner: apache
+                group: webdev
+                mode: '0664'
+
+            - name: Verify symlink exists
+              ansible.builtin.stat:
+                path: /var/www/html/webdev
+              register: symlink_stat
+
+            - name: Confirm symlink target
+              ansible.builtin.debug:
+                msg: "Symlink exists: {{ symlink_stat.stat.islnk }}, points to: {{ symlink_stat.stat.lnk_target }}"
+
+      Key points:
+        - state: link in the file module creates a symbolic link. The 'src' is
+          the target (where the link points) and 'dest' is the link path itself.
+          This is the opposite of what you might expect from 'ln -s src dest'.
+        - The content: parameter on the copy module writes a literal string to
+          the file. It is processed as a Jinja2 template, but here we use a
+          plain string "Development" with no templating needed.
+        - The stat module gathers information about a path. Use islnk to check
+          if it is a symbolic link and lnk_target to verify where it points.
+
+      Run a syntax check:
+        cd /home/vagrant/ansible
+        ansible-playbook --syntax-check webdev_content.yml
+
+      Run the playbook:
+        ansible-playbook webdev_content.yml
+
+      Verify the results:
+        ansible webservers -m command -a "ls -la /var/www/html/webdev"
+        ansible webservers -m command -a "cat /webdev/index.html"
+
+      Tip: Symlink tasks require careful attention to src vs dest. A
+      common mistake is reversing them. Remember: src is the EXISTING target
+      path (/webdev), dest is the NEW symlink path (/var/www/html/webdev).
+      Think of it as: "link at dest POINTS TO src".
+    checks:
+      - id: "3.1"
+        description: "webdev_content.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/webdev_content.yml"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "webdev_content.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check webdev_content.yml"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "symlink /var/www/html/webdev exists on node1"
+        node: node1
+        command: "test -L /var/www/html/webdev"
+        expect_rc: 0
+
+      - id: "3.4"
+        description: "/webdev/index.html exists on node1"
+        node: node1
+        command: "test -f /webdev/index.html"
+        expect_rc: 0
+
+      - id: "3.5"
+        description: "/webdev/index.html contains 'Development' on node1"
+        node: node1
+        command: "grep -q 'Development' /webdev/index.html"
+        expect_rc: 0
+
+  # ── Task 4: SELinux Booleans ──
+  - id: "4"
+    title: "SELinux Booleans"
+    points: 1
+    description: |
+      SELinux booleans are toggles that enable or disable specific SELinux
+      policy rules without rewriting policy. They are runtime switches that
+      let you allow behaviors that are off by default.
+
+      The httpd_can_network_connect boolean, when enabled, allows the Apache
+      HTTP server to make outbound network connections. This is required when
+      Apache acts as a reverse proxy, connects to a backend database, or
+      fetches external resources. By default it is disabled for security.
+
+      The ansible.posix.seboolean module manages SELinux booleans:
+
+        name:       — The boolean name (e.g. httpd_can_network_connect)
+        state:      — 'yes' to enable, 'no' to disable
+        persistent: — 'yes' to survive reboots (writes to policy on disk)
+                      'no' to set only for the current boot (runtime only)
+
+      Always use persistent: yes unless specifically told otherwise. A
+      non-persistent change is lost after reboot — nodes may be rebooted
+      before checking.
+
+      Create /home/vagrant/ansible/selinux_booleans.yml:
+
+        ---
+        - name: Configure SELinux booleans for web servers
+          hosts: webservers
+          become: true
+          tasks:
+            - name: Enable httpd_can_network_connect boolean persistently
+              ansible.posix.seboolean:
+                name: httpd_can_network_connect
+                state: yes
+                persistent: yes
+
+            - name: Verify the boolean is enabled
+              ansible.builtin.command:
+                cmd: getsebool httpd_can_network_connect
+              register: bool_status
+              changed_when: false
+
+            - name: Display boolean status
+              ansible.builtin.debug:
+                var: bool_status.stdout
+
+      Run a syntax check:
+        cd /home/vagrant/ansible
+        ansible-playbook --syntax-check selinux_booleans.yml
+
+      Run the playbook:
+        ansible-playbook selinux_booleans.yml
+
+      Verify the boolean is set on managed nodes:
+        ansible webservers -m command -a "getsebool httpd_can_network_connect"
+
+      Expected output:
+        httpd_can_network_connect --> on
+
+      The 'on' confirms the boolean is enabled. The persistent flag ensures it
+      is written to /etc/selinux/targeted/active/booleans.local as well as set
+      in the running kernel, so it survives a reboot.
+
+      Other common SELinux booleans:
+        httpd_enable_homedirs     — Allow Apache to serve content from home dirs
+        httpd_use_nfs             — Allow Apache to serve files from NFS mounts
+        httpd_can_sendmail        — Allow Apache to send email via sendmail/postfix
+        samba_enable_home_dirs    — Allow Samba to share home directories
+        ftpd_anon_write           — Allow anonymous FTP uploads
+
+      To see all httpd-related booleans and their current state:
+        getsebool -a | grep httpd
+
+      Tip: The seboolean module is in the ansible.posix collection. If
+      you get a "module not found" error, the collection is missing. Install it:
+        ansible-galaxy collection install ansible.posix
+
+      Tip: After running the boolean playbook, always verify with getsebool.
+      The exam grader checks the live system state, not just whether your playbook
+      ran. A playbook that exists but did not change the system state earns no
+      points for the runtime check.
+    checks:
+      - id: "4.1"
+        description: "selinux_booleans.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/selinux_booleans.yml"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "selinux_booleans.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check selinux_booleans.yml"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "selinux_booleans.yml uses seboolean module"
+        node: control
+        command: "grep -q 'seboolean' /home/vagrant/ansible/selinux_booleans.yml"
+        expect_rc: 0
+
+      - id: "4.4"
+        description: "httpd_can_network_connect is enabled on node1"
+        node: node1
+        command: "getsebool httpd_can_network_connect | grep -q 'on$'"
+        expect_rc: 0

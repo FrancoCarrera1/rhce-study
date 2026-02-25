@@ -1,0 +1,22 @@
+# Vagrant
+.vagrant/
+*.log
+
+# macOS
+.DS_Store
+
+# Editor swap files
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.pyc
+
+# Obsidian
+.obsidian/
+
+# Large binary — reconstructed from split zip parts
+Mac/almalinux9-vmtools.box
+Mac/almalinux9-vmtools.box.zip
+ansible/examiner/results/

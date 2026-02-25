@@ -1,0 +1,321 @@
+---
+id: lesson04_files_and_packages
+title: "Lesson 4: Managing Files & Packages"
+duration: 3600
+passing_score: 100
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [workers]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [workers]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [workers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [workers]
+  node5:
+    hostname: node5.lab.local
+    ip: "192.168.56.24"
+    ssh_user: vagrant
+    groups: [workers]
+
+tasks:
+  # ── Task 1: Manage Packages ──
+  - id: "1"
+    title: "Manage Packages"
+    points: 1
+    description: |
+      When different host groups need different packages, use separate plays
+      within the same playbook. Each play has its own hosts: target and its
+      own task list. Ansible runs all plays in the file sequentially.
+
+      Create /home/vagrant/ansible/packages.yml with two plays:
+        ---
+        - name: Install web packages on webservers
+          hosts: webservers
+          tasks:
+            - name: Install httpd and wget
+              ansible.builtin.dnf:
+                name:
+                  - httpd
+                  - wget
+                state: present
+
+        - name: Install database packages on dbservers
+          hosts: dbservers
+          tasks:
+            - name: Install mariadb-server
+              ansible.builtin.dnf:
+                name: mariadb-server
+                state: present
+
+      The name: parameter of ansible.builtin.dnf accepts either a single
+      string or a YAML list. Using a list installs all packages in one
+      transaction, which is faster than separate tasks.
+
+      Tip: Always use FQCNs (ansible.builtin.dnf not just dnf). In Ansible,
+      separate plays per host group is a common pattern.
+      Make sure your inventory has [webservers] and [dbservers] groups defined.
+    checks:
+      - id: "1.1"
+        description: "packages.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/packages.yml"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "packages.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check packages.yml"
+        expect_rc: 0
+
+      - id: "1.3"
+        description: "httpd is installed on node1 (webservers)"
+        node: node1
+        command: "rpm -q httpd"
+        expect_rc: 0
+
+      - id: "1.4"
+        description: "wget is installed on node1 (webservers)"
+        node: node1
+        command: "rpm -q wget"
+        expect_rc: 0
+
+      - id: "1.5"
+        description: "mariadb-server is installed on node3 (dbservers)"
+        node: node3
+        command: "rpm -q mariadb-server"
+        expect_rc: 0
+
+  # ── Task 2: Copy Files to Remote Hosts ──
+  - id: "2"
+    title: "Copy Files to Remote Hosts"
+    points: 1
+    description: |
+      The ansible.builtin.copy module with src: copies a file from the control
+      node to every managed host. By convention, local files to be distributed
+      are stored in a files/ subdirectory next to your playbook — Ansible
+      searches there automatically when you give a relative src: path.
+
+      First, create the source file on the control node:
+        mkdir -p /home/vagrant/ansible/files
+        echo "Authorized Access Only" > /home/vagrant/ansible/files/banner.txt
+
+      Then create /home/vagrant/ansible/copy_files.yml:
+        ---
+        - name: Deploy login banner to all lab hosts
+          hosts: lab
+          tasks:
+            - name: Copy banner to /etc/issue
+              ansible.builtin.copy:
+                src: files/banner.txt
+                dest: /etc/issue
+                owner: root
+                group: root
+                mode: '0644'
+
+      /etc/issue is displayed before the login prompt on local console logins.
+      Deploying it via Ansible ensures every node shows a consistent banner.
+
+      Tip: Run ansible-playbook --syntax-check before running. Also use
+      --check --diff to preview the diff before writing to /etc/ files.
+    checks:
+      - id: "2.1"
+        description: "files/banner.txt source file exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/files/banner.txt"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "/etc/issue exists on node1"
+        node: node1
+        command: "test -f /etc/issue"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "/etc/issue contains 'Authorized' on node1"
+        node: node1
+        command: "grep -q 'Authorized' /etc/issue"
+        expect_rc: 0
+
+  # ── Task 3: Use lineinfile Module ──
+  - id: "3"
+    title: "Use lineinfile Module"
+    points: 1
+    description: |
+      The ansible.builtin.lineinfile module ensures a specific line exists (or
+      does not exist) in a file. It is ideal for single-line configuration
+      changes where you do not own the entire file — for example, tuning a
+      setting in /etc/profile without replacing the whole file.
+
+      lineinfile searches for a regexp pattern and replaces the matching line,
+      or appends the line if no match is found. This makes it idempotent: if
+      the line is already correct, nothing changes.
+
+      Create /home/vagrant/ansible/lineinfile.yml:
+        ---
+        - name: Tune shell history size on all lab hosts
+          hosts: lab
+          tasks:
+            - name: Ensure HISTSIZE is set to 5000 in /etc/profile
+              ansible.builtin.lineinfile:
+                path: /etc/profile
+                regexp: '^HISTSIZE='
+                line: 'HISTSIZE=5000'
+
+      The regexp: '^HISTSIZE=' matches any existing HISTSIZE= line at the
+      start of a line and replaces it with line:. If no such line exists, it
+      is appended. Compare this to blockinfile (next task) which manages a
+      whole block of lines bounded by marker comments.
+
+      Tip: Use ansible-doc ansible.builtin.lineinfile on the exam to see
+      all parameters including insertbefore, insertafter, and backrefs.
+    checks:
+      - id: "3.1"
+        description: "lineinfile.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/lineinfile.yml"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "lineinfile.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check lineinfile.yml"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "HISTSIZE=5000 is present in /etc/profile on node1"
+        node: node1
+        command: "grep -q 'HISTSIZE=5000' /etc/profile"
+        expect_rc: 0
+
+  # ── Task 4: Use blockinfile Module ──
+  - id: "4"
+    title: "Use blockinfile Module"
+    points: 1
+    description: |
+      The ansible.builtin.blockinfile module inserts, updates, or removes a
+      block of multiple lines in a file. It wraps the block with configurable
+      marker comments so it can identify and idempotently update the block on
+      subsequent runs without duplicating content.
+
+      By default the markers look like:
+        # BEGIN ANSIBLE MANAGED BLOCK
+        ... your content ...
+        # END ANSIBLE MANAGED BLOCK
+
+      Create /home/vagrant/ansible/blockinfile.yml:
+        ---
+        - name: Add custom environment settings to /etc/profile
+          hosts: lab
+          tasks:
+            - name: Insert custom environment block
+              ansible.builtin.blockinfile:
+                path: /etc/profile
+                marker: "# {mark} ANSIBLE MANAGED BLOCK - custom env"
+                block: |
+                  export EDITOR=vim
+                  export LANG=en_US.UTF-8
+
+      The marker: parameter uses {mark} as a placeholder that becomes BEGIN
+      or END. Using a unique marker string prevents collisions when multiple
+      playbooks manage the same file with blockinfile.
+
+      Tip: YAML uses 2-space indentation. Indentation errors are the #1
+      cause of failures. The block: | literal block scalar must be indented
+      consistently — every line of the block must align at the same level.
+    checks:
+      - id: "4.1"
+        description: "blockinfile.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/blockinfile.yml"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "'export EDITOR=vim' is present in /etc/profile on node1"
+        node: node1
+        command: "grep -q 'export EDITOR=vim' /etc/profile"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "'export LANG=en_US.UTF-8' is present in /etc/profile on node1"
+        node: node1
+        command: "grep -q 'LANG=en_US.UTF-8' /etc/profile"
+        expect_rc: 0
+
+  # ── Task 5: Manage File Permissions ──
+  - id: "5"
+    title: "Manage File Permissions"
+    points: 1
+    description: |
+      Linux supports special permission bits beyond the standard rwxrwxrwx:
+        - setuid (4xxx): runs the file as its owner
+        - setgid (2xxx): runs as the group; on directories, new files inherit
+          the directory's group rather than the creator's primary group
+        - sticky bit (1xxx): on directories, only the owner can delete files
+
+      Mode 2775 means: setgid + rwxrwxr-x. This is the standard pattern for
+      shared team directories — members of the owning group can read and write,
+      and new files automatically inherit the group.
+
+      Create /home/vagrant/ansible/permissions.yml:
+        ---
+        - name: Create shared directory with setgid permissions
+          hosts: lab
+          tasks:
+            - name: Create /opt/shared directory
+              ansible.builtin.file:
+                path: /opt/shared
+                state: directory
+                mode: '2775'
+                owner: vagrant
+                group: vagrant
+
+            - name: Create a file inside /opt/shared
+              ansible.builtin.copy:
+                content: "Shared file\n"
+                dest: /opt/shared/shared.txt
+                mode: '0644'
+
+      Always quote mode values as strings ('2775') to prevent YAML from
+      interpreting them as octal integers, which can silently strip leading
+      zeros.
+
+      Tip: Use ansible-doc ansible.builtin.file to review the mode,
+      owner, group, and setype parameters. The setype parameter is key when
+      SELinux contexts are required on the exam.
+    checks:
+      - id: "5.1"
+        description: "permissions.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/permissions.yml"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "/opt/shared directory exists on node1"
+        node: node1
+        command: "test -d /opt/shared"
+        expect_rc: 0
+
+      - id: "5.3"
+        description: "/opt/shared has mode 2775 on node1"
+        node: node1
+        command: "stat -c '%a' /opt/shared"
+        expect_stdout: "2775"

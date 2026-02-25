@@ -2,44 +2,25 @@
 # vi: set ft=ruby :
 
 CONTROL_NODE = "control"
-WORKERS = ["node1", "node2", "node3"]
+WORKERS = ["node1", "node2", "node3", "node4", "node5"]
+NETWORK_PREFIX = "192.168.56"
 
 Vagrant.configure("2") do |config|
-  # bento provides arm64 builds for Apple Silicon
-  config.vm.box = "bento/centos-stream-9"
+  # Custom AlmaLinux 9 box with open-vm-tools pre-installed
+  config.vm.box = "almalinux9-vmtools"
+  config.vm.synced_folder ".", "/vagrant", disabled: true
 
-  # VMware Fusion (recommended for Apple Silicon)
+  # VMware Fusion for Apple Silicon
   config.vm.provider "vmware_desktop" do |v|
     v.memory = 1024
     v.cpus = 1
   end
 
-  # Ansible Control Node
-  config.vm.define CONTROL_NODE, primary: true do |ctrl|
-    ctrl.vm.hostname = "control.lab.local"
-    ctrl.vm.network "private_network", ip: "192.168.56.10"
-
-    ctrl.vm.provider "vmware_desktop" do |v|
-      v.memory = 2048
-      v.vmx["displayName"] = "rhce-control"
-    end
-
-    ctrl.vm.provision "shell", inline: <<-SHELL
-      dnf install -y epel-release
-      dnf install -y ansible-core python3-pip sshpass vim
-      sudo -u vagrant bash -c '
-        if [ ! -f ~/.ssh/id_rsa ]; then
-          ssh-keygen -t rsa -b 2048 -f ~/.ssh/id_rsa -N ""
-        fi
-      '
-    SHELL
-  end
-
-  # Worker Nodes (managed nodes)
+  # ── Worker Nodes (must come up first so control can push SSH keys) ──
   WORKERS.each_with_index do |name, index|
     config.vm.define name do |node|
       node.vm.hostname = "#{name}.lab.local"
-      node.vm.network "private_network", ip: "192.168.56.#{20 + index}"
+      node.vm.network "private_network", ip: "#{NETWORK_PREFIX}.#{20 + index}"
 
       node.vm.provider "vmware_desktop" do |v|
         v.memory = 512
@@ -48,7 +29,103 @@ Vagrant.configure("2") do |config|
 
       node.vm.provision "shell", inline: <<-SHELL
         dnf install -y python3
+        # Enable password auth so control node can push SSH keys via sshpass
+        sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+        systemctl restart sshd
+
+        # Create lab disks for partitioning, LVM, swap, VDO, Stratis, etc.
+        for i in 1 2 3; do
+          if [ ! -f /opt/lab_disk${i}.img ]; then
+            fallocate -l 1G /opt/lab_disk${i}.img
+          fi
+        done
+
+        # Systemd service to attach loop devices on boot
+        cat > /etc/systemd/system/lab-disks.service <<'UNIT'
+[Unit]
+Description=Attach lab disk images as loop devices
+DefaultDependencies=no
+After=systemd-tmpfiles-setup.service
+Before=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c 'for i in 1 2 3; do losetup -j /opt/lab_disk${i}.img | grep -q loop || losetup -fP /opt/lab_disk${i}.img; done'
+ExecStop=/bin/bash -c 'for i in 1 2 3; do losetup -j /opt/lab_disk${i}.img | cut -d: -f1 | xargs -r losetup -d; done'
+
+[Install]
+WantedBy=local-fs.target
+UNIT
+        systemctl daemon-reload
+        systemctl enable lab-disks.service
+
+        # Attach loop devices now (service handles future boots)
+        for i in 1 2 3; do
+          losetup -j /opt/lab_disk${i}.img | grep -q loop || losetup -fP /opt/lab_disk${i}.img
+        done
       SHELL
     end
+  end
+
+  # ── Ansible Control Node ──
+  config.vm.define CONTROL_NODE, primary: true do |ctrl|
+    ctrl.vm.hostname = "control.lab.local"
+    ctrl.vm.network "private_network", ip: "#{NETWORK_PREFIX}.10"
+    ctrl.vm.synced_folder "../ansible", "/home/vagrant/ansible", owner: "vagrant", group: "vagrant"
+
+    ctrl.vm.provider "vmware_desktop" do |v|
+      v.memory = 2048
+      v.vmx["displayName"] = "rhce-control"
+    end
+
+    ctrl.vm.provision "shell", inline: <<-SHELL
+      dnf install -y epel-release
+      dnf config-manager --set-enabled crb
+      dnf install -y ansible-core python3-pip sshpass vim tree
+      dnf install -y python3-devel gcc oniguruma-devel
+      pip3 install ansible-navigator
+
+      # Generate SSH keypair for vagrant user
+      sudo -u vagrant bash -c '
+        if [ ! -f ~/.ssh/id_rsa ]; then
+          ssh-keygen -t rsa -b 2048 -f ~/.ssh/id_rsa -N ""
+        fi
+      '
+
+      # Push SSH key to all worker nodes
+      for ip in #{WORKERS.each_with_index.map { |_, i| "#{NETWORK_PREFIX}.#{20 + i}" }.join(' ')}; do
+        sudo -u vagrant sshpass -p vagrant ssh-copy-id -o StrictHostKeyChecking=no vagrant@${ip}
+      done
+
+      # Create /etc/hosts entries
+      echo "#{NETWORK_PREFIX}.10  control control.lab.local" >> /etc/hosts
+      #{WORKERS.each_with_index.map { |name, i| "echo \"#{NETWORK_PREFIX}.#{20 + i}  #{name} #{name}.lab.local\" >> /etc/hosts" }.join("\n      ")}
+
+      # Vim config for YAML editing
+      sudo -u vagrant bash -c 'cat > ~/.vimrc << "EOF"
+autocmd FileType yaml setlocal ai et sts=2 ts=2 sw=2 nu cuc cul
+EOF'
+
+      # Bash aliases for ansible-navigator
+      sudo -u vagrant bash -c 'cat >> ~/.bashrc << "EOF"
+
+# Ansible aliases
+alias ansc="ansible-navigator run -m stdout --syntax-check"
+alias anr="ansible-navigator run -m stdout"
+EOF'
+
+      # ansible/ directory is synced from the host via synced_folder
+    SHELL
+
+    # Exam-prep provisioner: removes Ansible and creates empty exam dir.
+    # Usage before each exam attempt:
+    #   vagrant snapshot restore clean-slate
+    #   vagrant provision control --provision-with exam_reset
+    ctrl.vm.provision "exam_reset", type: "shell", run: "never", inline: <<-SHELL
+      dnf remove -y ansible-core ansible-navigator python3-pip 2>/dev/null || true
+      rm -rf /home/vagrant/exam
+      sudo -u vagrant mkdir -p /home/vagrant/exam
+    SHELL
   end
 end

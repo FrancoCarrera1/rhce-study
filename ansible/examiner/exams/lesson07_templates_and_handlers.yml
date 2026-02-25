@@ -1,0 +1,473 @@
+---
+id: lesson07_templates_and_handlers
+title: "Lesson 7: Jinja2 Templates & Handlers"
+duration: 3600
+passing_score: 100
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node5:
+    hostname: node5.lab.local
+    ip: "192.168.56.24"
+    ssh_user: vagrant
+    groups: [workers]
+
+tasks:
+  # ── Task 1: Create Your First Template ──
+  - id: "1"
+    title: "Create Your First Template"
+    points: 1
+    description: |
+      PREREQUISITE: This lesson assumes /home/vagrant/ansible/ansible.cfg and
+      a working inventory file already exist on the control node, created during
+      lessons 01 and 02. All playbooks should be written in /home/vagrant/ansible/.
+
+      Jinja2 is a Python templating engine that Ansible uses to render dynamic
+      content. Template files have a .j2 extension by convention. Inside a
+      template, {{ variable }} outputs a value and Ansible substitutes it with
+      the actual variable content at render time.
+
+      Tip: Templates use Jinja2 syntax: {{ var }}, {% for %}, {% if %}.
+      The double-brace {{ }} is for output (printing a value). The brace-percent
+      {% %} is for control flow (loops, conditionals). The brace-hash {# #} is
+      for comments that do not appear in the rendered output.
+
+      Step 1 — Create the templates directory and the template file:
+
+        mkdir -p /home/vagrant/ansible/templates
+
+      Create /home/vagrant/ansible/templates/motd.j2 with this content:
+        Welcome to {{ ansible_fqdn }}
+        OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+
+      Step 2 — Create the playbook /home/vagrant/ansible/motd.yml:
+
+        ---
+        - name: Deploy MOTD template to all lab hosts
+          hosts: lab
+          become: true
+          tasks:
+            - name: Deploy message of the day
+              ansible.builtin.template:
+                src: templates/motd.j2
+                dest: /etc/motd
+                owner: root
+                group: root
+                mode: '0644'
+
+      The ansible.builtin.template module reads your .j2 file on the control
+      node, renders it (substituting all {{ }} expressions using the current
+      host's facts and variables), then copies the rendered result to dest: on
+      the managed host. Each host gets its own customized version of the file.
+
+      The src: path is relative to the playbook directory. Keeping templates in
+      a templates/ subdirectory is the conventional layout.
+
+      Run it with: ansible-playbook motd.yml
+      Verify: ansible lab -m command -a "cat /etc/motd"
+    checks:
+      - id: "1.1"
+        description: "templates/motd.j2 template file exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/templates/motd.j2"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "motd.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/motd.yml"
+        expect_rc: 0
+
+      - id: "1.3"
+        description: "motd.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/motd.yml"
+        expect_rc: 0
+
+      - id: "1.4"
+        description: "/etc/motd exists on node1"
+        node: node1
+        command: "test -f /etc/motd"
+        expect_rc: 0
+
+      - id: "1.5"
+        description: "/etc/motd on node1 contains the hostname"
+        node: node1
+        command: "grep -q 'node1' /etc/motd"
+        expect_rc: 0
+
+  # ── Task 2: Template with For Loop ──
+  - id: "2"
+    title: "Template with For Loop"
+    points: 1
+    description: |
+      Jinja2 for loops let you generate repetitive content dynamically. The
+      {% for item in list %} ... {% endfor %} block renders its body once for
+      each element in the list.
+
+      You also have access to hostvars — a special Ansible dictionary that
+      contains all facts and variables for every host in the inventory. This
+      lets a template on one host reference data about other hosts:
+        hostvars['node2']['ansible_default_ipv4']['address']
+
+      Step 1 — Create /home/vagrant/ansible/templates/hosts_list.j2:
+
+        # Ansible-managed host list
+        {% for host in groups['all'] %}
+        {{ hostvars[host]['ansible_default_ipv4']['address'] }} {{ host }}
+        {% endfor %}
+
+      Step 2 — Create /home/vagrant/ansible/hosts_list.yml with TWO plays.
+      The first play gathers facts from all hosts so hostvars is fully populated.
+      The second play deploys the template to node1:
+
+        ---
+        - name: Gather facts from all hosts
+          hosts: all
+          gather_facts: true
+
+        - name: Deploy hosts list to node1
+          hosts: node1
+          become: true
+          tasks:
+            - name: Deploy hosts list template
+              ansible.builtin.template:
+                src: templates/hosts_list.j2
+                dest: /tmp/hosts_list.txt
+                mode: '0644'
+
+      Why two plays? Facts for a host are only available in hostvars after
+      Ansible has connected to that host and run the setup module. If you only
+      targeted node1, hostvars for node2-node5 would be empty and the for loop
+      would produce blank IP addresses. The first play ensures all facts are
+      gathered before the template is rendered.
+
+      Tip: Templates use Jinja2 syntax: {{ var }}, {% for %}, {% if %}.
+      Remember that {% %} blocks do NOT produce output on their own — only
+      {{ }} produces output. The for and endfor lines themselves are invisible
+      in the rendered file.
+
+      Run it with: ansible-playbook hosts_list.yml
+      Verify: ansible node1 -m command -a "cat /tmp/hosts_list.txt"
+    checks:
+      - id: "2.1"
+        description: "templates/hosts_list.j2 template exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/templates/hosts_list.j2"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "hosts_list.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/hosts_list.yml"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "hosts_list.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/hosts_list.yml"
+        expect_rc: 0
+
+      - id: "2.4"
+        description: "/tmp/hosts_list.txt exists on node1"
+        node: node1
+        command: "test -f /tmp/hosts_list.txt"
+        expect_rc: 0
+
+      - id: "2.5"
+        description: "/tmp/hosts_list.txt on node1 contains an entry for node1"
+        node: node1
+        command: "grep -q 'node1' /tmp/hosts_list.txt"
+        expect_rc: 0
+
+  # ── Task 3: Template with If Conditional ──
+  - id: "3"
+    title: "Template with If Conditional"
+    points: 1
+    description: |
+      Jinja2 if/else/endif blocks let your template produce different output
+      depending on variables or facts. The syntax is:
+
+        {% if condition %}
+        ... content if true ...
+        {% else %}
+        ... content if false ...
+        {% endif %}
+
+      The special Ansible variable group_names is a list of all inventory groups
+      that the current host belongs to. This makes it perfect for conditional
+      content in templates:
+
+        {% if 'webservers' in group_names %}
+        Role: webserver
+        {% else %}
+        Role: other
+        {% endif %}
+
+      Step 1 — Create /home/vagrant/ansible/templates/server_config.j2:
+
+        # Server configuration — managed by Ansible
+        # Generated: {{ ansible_date_time.iso8601 }}
+        Hostname: {{ ansible_fqdn }}
+        {% if 'webservers' in group_names %}
+        Role: webserver
+        {% elif 'dbservers' in group_names %}
+        Role: dbserver
+        {% else %}
+        Role: other
+        {% endif %}
+
+      Step 2 — Create /home/vagrant/ansible/server_config.yml:
+
+        ---
+        - name: Deploy server config based on group membership
+          hosts: lab
+          become: true
+          tasks:
+            - name: Deploy server configuration file
+              ansible.builtin.template:
+                src: templates/server_config.j2
+                dest: /etc/server_config.txt
+                mode: '0644'
+
+      Notice the use of {% elif %} — Jinja2 supports full if/elif/else chains.
+      ansible_date_time.iso8601 is a nested fact that returns the current
+      timestamp, useful for stamping generated config files.
+
+      Pro Tip: In a timed assessment, you have no internet. Use ansible-doc and
+      /usr/share/doc/ for reference. Jinja2 filter documentation is available
+      at /usr/share/doc/python3-jinja2/ and ansible-doc -t filter lists all
+      built-in Ansible filters.
+
+      Run it with: ansible-playbook server_config.yml
+      Verify: ansible node1 -m command -a "cat /etc/server_config.txt"
+    checks:
+      - id: "3.1"
+        description: "templates/server_config.j2 template exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/templates/server_config.j2"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "server_config.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/server_config.yml"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "server_config.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/server_config.yml"
+        expect_rc: 0
+
+      - id: "3.4"
+        description: "/etc/server_config.txt on node1 shows webserver role"
+        node: node1
+        command: "grep -q 'webserver' /etc/server_config.txt"
+        expect_rc: 0
+
+  # ── Task 4: Use Handlers ──
+  - id: "4"
+    title: "Use Handlers"
+    points: 1
+    description: |
+      Handlers are tasks that only run when explicitly triggered by another task
+      using the notify: keyword. They are designed for side-effect actions like
+      restarting a service after its configuration changes. The key distinction
+      from normal tasks: handlers run ONCE at the END of the play, regardless
+      of how many tasks notified them during the play.
+
+      Tip: Handlers run at the END of the play, not immediately. Use
+      meta: flush_handlers if needed. If you have a task that modifies a config
+      file and a handler that restarts the service, the service will not restart
+      until all tasks in the play finish. If you need the restart to happen
+      mid-play (before later tasks run), add a task:
+        - meta: flush_handlers
+
+      Handlers are only triggered if the notifying task reports changed. If the
+      config file was already correct (no change), notify is not fired and the
+      handler does not run. This is exactly the idempotent behavior you want.
+
+      Create the playbook /home/vagrant/ansible/handler_demo.yml targeting node1:
+
+        ---
+        - name: Install and configure httpd with handler
+          hosts: node1
+          become: true
+          handlers:
+            - name: Restart httpd
+              ansible.builtin.service:
+                name: httpd
+                state: restarted
+
+          tasks:
+            - name: Install httpd
+              ansible.builtin.dnf:
+                name: httpd
+                state: present
+
+            - name: Start and enable httpd
+              ansible.builtin.service:
+                name: httpd
+                state: started
+                enabled: true
+
+            - name: Deploy index.html template
+              ansible.builtin.template:
+                src: templates/index.j2
+                dest: /var/www/html/index.html
+                mode: '0644'
+              notify: Restart httpd
+
+      Create /home/vagrant/ansible/templates/index.j2:
+        Managed by Ansible on {{ ansible_fqdn }}
+
+      The notify: value must match the handler name: exactly (case-sensitive).
+      Handlers are defined in a handlers: section at the play level, parallel
+      to tasks:.
+
+      Run it with: ansible-playbook handler_demo.yml
+      Verify: curl http://192.168.56.20/ or ansible node1 -m command -a "cat /var/www/html/index.html"
+    checks:
+      - id: "4.1"
+        description: "handler_demo.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/handler_demo.yml"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "handler_demo.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/handler_demo.yml"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "httpd service is active on node1"
+        node: node1
+        command: "systemctl is-active httpd"
+        expect_rc: 0
+        expect_stdout: "active"
+
+      - id: "4.4"
+        description: "/var/www/html/index.html contains expected content on node1"
+        node: node1
+        command: "grep -q 'Managed by Ansible' /var/www/html/index.html"
+        expect_rc: 0
+
+  # ── Task 5: Multiple Handlers ──
+  - id: "5"
+    title: "Multiple Handlers"
+    points: 1
+    description: |
+      A task can notify multiple handlers, and a handler can be triggered by
+      multiple tasks. Ansible provides two patterns for this:
+
+      Pattern 1 — notify a list of handler names:
+        notify:
+          - Restart httpd
+          - Log config change
+
+      Pattern 2 — use listen: on handlers. Multiple handlers can share a
+      "listen topic" and all fire when any task notifies that topic:
+        handlers:
+          - name: Restart httpd
+            listen: "web config changed"
+            ansible.builtin.service:
+              name: httpd
+              state: restarted
+
+          - name: Log config change
+            listen: "web config changed"
+            ansible.builtin.copy:
+              dest: /tmp/handler-log.txt
+              content: "Config updated\n"
+
+        tasks:
+          - name: Modify httpd config
+            ...
+            notify: "web config changed"
+
+      The listen: approach is powerful because the task notifying the topic does
+      not need to know about the individual handlers — you can add new handlers
+      to the topic without modifying the tasks.
+
+      Create /home/vagrant/ansible/multi_handler.yml targeting node1:
+
+        ---
+        - name: Manage httpd configuration with multiple handlers
+          hosts: node1
+          become: true
+          handlers:
+            - name: Restart httpd
+              ansible.builtin.service:
+                name: httpd
+                state: restarted
+
+            - name: Log config update
+              ansible.builtin.copy:
+                dest: /tmp/handler-log.txt
+                content: "Config updated\n"
+
+          tasks:
+            - name: Set ServerAdmin in httpd.conf
+              ansible.builtin.lineinfile:
+                path: /etc/httpd/conf/httpd.conf
+                regexp: '^ServerAdmin'
+                line: 'ServerAdmin admin@lab.local'
+              notify:
+                - Restart httpd
+                - Log config update
+
+      The ansible.builtin.lineinfile module finds lines matching regexp: and
+      replaces them with line:. If no match is found, it appends the line.
+      This is idempotent: running it twice produces the same result.
+
+      Tip: Handlers run at the END of the play, not immediately. Use
+      meta: flush_handlers if needed. Also note that handlers run in the ORDER
+      THEY ARE DEFINED in the handlers: section, NOT in the order they are
+      notified. Define them carefully if order matters.
+
+      Run it with: ansible-playbook multi_handler.yml
+      Verify: ansible node1 -m command -a "grep ServerAdmin /etc/httpd/conf/httpd.conf"
+    checks:
+      - id: "5.1"
+        description: "multi_handler.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/multi_handler.yml"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "multi_handler.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/multi_handler.yml"
+        expect_rc: 0
+
+      - id: "5.3"
+        description: "httpd.conf on node1 has ServerAdmin set to admin@lab.local"
+        node: node1
+        command: "grep -q 'ServerAdmin admin@lab.local' /etc/httpd/conf/httpd.conf"
+        expect_rc: 0

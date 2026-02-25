@@ -1,0 +1,260 @@
+---
+id: lesson01_configuration
+title: "Lesson 1: Ansible Configuration & Inventory"
+duration: 3600
+passing_score: 100
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [workers]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [workers]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [workers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [workers]
+  node5:
+    hostname: node5.lab.local
+    ip: "192.168.56.24"
+    ssh_user: vagrant
+    groups: [workers]
+
+tasks:
+  # ── Task 1: Create the Ansible Working Directory ──
+  - id: "1"
+    title: "Create the Ansible Working Directory"
+    points: 1
+    description: |
+      Every Ansible project should live in its own directory. Keeping playbooks,
+      inventory, roles, and configuration together in one place makes your
+      project portable and easy to run from any location.
+
+      On the control node, create your working directory:
+        mkdir /home/vagrant/ansible
+
+      This directory will hold everything: ansible.cfg, your inventory file,
+      all playbooks, and later your roles/ subdirectory. Treat it like the
+      root of a software project — everything related to this lab's automation
+      lives here.
+
+      Pro Tip: Set up ansible.cfg first — it's always the first task in any
+      Ansible project. Graders and automation pipelines expect a specific
+      directory structure.
+    checks:
+      - id: "1.1"
+        description: "/home/vagrant/ansible directory exists on control"
+        node: control
+        command: "test -d /home/vagrant/ansible"
+        expect_rc: 0
+
+  # ── Task 2: Create ansible.cfg ──
+  - id: "2"
+    title: "Create ansible.cfg"
+    points: 1
+    description: |
+      ansible.cfg is the configuration file that tells Ansible how to behave.
+      Ansible searches for it in this order: ./ansible.cfg (current dir),
+      ~/.ansible.cfg (home dir), then /etc/ansible/ansible.cfg (system-wide).
+      A project-local ansible.cfg always wins, which is why we put it in
+      /home/vagrant/ansible/.
+
+      Create /home/vagrant/ansible/ansible.cfg with the following content:
+        [defaults]
+        inventory = /home/vagrant/ansible/inventory
+        remote_user = vagrant
+        host_key_checking = False
+
+        [privilege_escalation]
+        become = True
+
+      Each setting serves a purpose:
+        - inventory: where Ansible finds the list of managed hosts
+        - remote_user: the SSH user for all connections
+        - host_key_checking = False: skips SSH fingerprint prompts (essential
+          in lab environments where hosts are rebuilt frequently)
+        - become = True: enables sudo privilege escalation by default so tasks
+          that need root access work without extra flags
+
+      Pro Tip: Set up ansible.cfg first — it's always the first task.
+      Use exact paths as specified in the project requirements.
+    checks:
+      - id: "2.1"
+        description: "ansible.cfg exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/ansible.cfg"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "ansible.cfg sets inventory path"
+        node: control
+        command: "grep -q 'inventory.*=.*/home/vagrant/ansible/inventory' /home/vagrant/ansible/ansible.cfg"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "ansible.cfg sets remote_user to vagrant"
+        node: control
+        command: "grep -q 'remote_user.*=.*vagrant' /home/vagrant/ansible/ansible.cfg"
+        expect_rc: 0
+
+      - id: "2.4"
+        description: "ansible.cfg enables privilege escalation"
+        node: control
+        command: "grep -q 'become.*=.*[Tt]rue' /home/vagrant/ansible/ansible.cfg"
+        expect_rc: 0
+
+  # ── Task 3: Create a Basic Inventory ──
+  - id: "3"
+    title: "Create a Basic Inventory"
+    points: 1
+    description: |
+      The inventory file tells Ansible which hosts it manages and how to group
+      them. The simplest format is INI, where groups are defined with square
+      brackets and hosts are listed one per line beneath the group header.
+
+      Create /home/vagrant/ansible/inventory with this content:
+        [webservers]
+        node1.lab.local
+        node2.lab.local
+
+        [dbservers]
+        node3.lab.local
+        node4.lab.local
+
+      Groups let you target subsets of your infrastructure. A playbook with
+      hosts: webservers will only run on node1 and node2. You can use
+      hostnames, IP addresses, or short names — just be consistent with how
+      the hosts resolve in DNS or /etc/hosts.
+
+      Tip: YAML uses 2-space indentation. Indentation errors are the #1
+      cause of failures — but INI inventory files use no indentation at all.
+      Know which format you are editing at any moment.
+    checks:
+      - id: "3.1"
+        description: "inventory file exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/inventory"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "inventory contains [webservers] group"
+        node: control
+        command: "grep -q '\\[webservers\\]' /home/vagrant/ansible/inventory"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "inventory contains [dbservers] group"
+        node: control
+        command: "grep -q '\\[dbservers\\]' /home/vagrant/ansible/inventory"
+        expect_rc: 0
+
+      - id: "3.4"
+        description: "inventory contains node1"
+        node: control
+        command: "grep -q 'node1' /home/vagrant/ansible/inventory"
+        expect_rc: 0
+
+      - id: "3.5"
+        description: "inventory contains node3"
+        node: control
+        command: "grep -q 'node3' /home/vagrant/ansible/inventory"
+        expect_rc: 0
+
+  # ── Task 4: Add Group Hierarchy ──
+  - id: "4"
+    title: "Add Group Hierarchy"
+    points: 1
+    description: |
+      Ansible supports group nesting through the [parentgroup:children] syntax.
+      This lets you build a hierarchy where a parent group automatically
+      includes all hosts from its child groups. Targeting the parent in a
+      playbook runs the play against all descendant hosts.
+
+      Add the following to your /home/vagrant/ansible/inventory file:
+        [lab:children]
+        webservers
+        dbservers
+
+        [all:vars]
+        ansible_user=vagrant
+
+      The [lab:children] block creates a 'lab' group containing every host
+      in webservers and dbservers. The [all:vars] block sets variables for
+      all hosts — here we set ansible_user as a belt-and-suspenders fallback
+      alongside the remote_user in ansible.cfg. Group variables can also live
+      in a group_vars/ directory (preferred for complex projects).
+
+      Tip: Use ansible-doc <module> to look up parameters. You can also use
+      ansible-inventory --list to verify your inventory structure looks correct
+      before running playbooks.
+    checks:
+      - id: "4.1"
+        description: "inventory contains [lab:children] group"
+        node: control
+        command: "grep -q '\\[lab:children\\]' /home/vagrant/ansible/inventory"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "webservers listed under [lab:children]"
+        node: control
+        command: "grep -A2 '\\[lab:children\\]' /home/vagrant/ansible/inventory | grep -q 'webservers'"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "ansible_user set in [all:vars]"
+        node: control
+        command: "grep -q 'ansible_user.*=.*vagrant' /home/vagrant/ansible/inventory"
+        expect_rc: 0
+
+  # ── Task 5: Test Your Configuration ──
+  - id: "5"
+    title: "Test Your Configuration"
+    points: 1
+    description: |
+      With ansible.cfg and inventory in place, you can now run ad-hoc commands
+      without specifying -i or -u flags — Ansible reads them from your config
+      file automatically because you are running from the same directory.
+
+      From /home/vagrant/ansible, run:
+        ansible all -m ping
+
+      If everything is configured correctly, all nodes in your inventory will
+      respond with SUCCESS. If any node fails, check:
+        1. Is the hostname resolvable? (ping node1.lab.local)
+        2. Is SSH working? (ssh vagrant@node1.lab.local)
+        3. Does your inventory file have the correct hostnames?
+
+      Ansible picks up ansible.cfg by searching the current working directory
+      first. Always cd into your project directory before running playbooks or
+      ad-hoc commands — this ensures the right config is loaded.
+
+      Pro Tip: Set up ansible.cfg first — it's always the first task.
+      Verify it works with ansible all -m ping before writing any playbooks.
+    checks:
+      - id: "5.1"
+        description: "ansible.cfg exists at expected path"
+        node: control
+        command: "test -f /home/vagrant/ansible/ansible.cfg"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "inventory exists at expected path"
+        node: control
+        command: "test -f /home/vagrant/ansible/inventory"
+        expect_rc: 0

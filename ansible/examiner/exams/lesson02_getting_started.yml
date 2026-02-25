@@ -1,0 +1,163 @@
+---
+id: lesson02_getting_started
+title: "Lesson 2: Lab Verification & Ad-Hoc Commands"
+duration: 3600
+passing_score: 100
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [workers]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [workers]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [workers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [workers]
+  node5:
+    hostname: node5.lab.local
+    ip: "192.168.56.24"
+    ssh_user: vagrant
+    groups: [workers]
+
+tasks:
+  # ── Task 1: Verify Lab Connectivity ──
+  - id: "1"
+    title: "Verify Lab Connectivity"
+    points: 1
+    description: |
+      Ansible is an agentless automation tool that uses SSH to manage remote
+      systems. It follows a control node / managed node architecture: you run
+      commands and playbooks from the control node, which then connects to
+      managed nodes over SSH — no software needs to be installed on the
+      managed nodes.
+
+      SSH into the control node and confirm that ansible-core is installed by
+      running: ansible --version
+
+      The output will show the ansible-core version, the Python interpreter it
+      uses, and several configuration paths. This is your command centre for
+      all automation tasks in this lab.
+
+      Exam Tip: Set up ansible.cfg first — it's always the first exam task.
+    checks:
+      - id: "1.1"
+        description: "ansible-core package is installed on the control node"
+        node: control
+        command: "rpm -q ansible-core"
+        expect_rc: 0
+
+  # ── Task 2: Run Your First Ad-Hoc Command ──
+  - id: "2"
+    title: "Run Your First Ad-Hoc Command"
+    points: 1
+    description: |
+      Ad-hoc commands let you run a single Ansible module across your inventory
+      without writing a playbook. The general syntax is:
+        ansible <pattern> -m <module> [options]
+
+      Run the following from the control node:
+        ansible all -m ping
+
+      NOTE: The ansible.builtin.ping module is NOT an ICMP ping. It connects
+      to each managed node via SSH, verifies Python is available, and returns
+      {"ping": "pong"}. A SUCCESS response means Ansible can fully communicate
+      with that host. If you see UNREACHABLE, fix SSH connectivity first.
+
+      Make sure you have a working inventory file pointing to your nodes before
+      running this. If you haven't created one yet, use -i with a comma-
+      separated host list: ansible all -i node1.lab.local, -m ping -u vagrant
+
+      Exam Tip: Run ansible-playbook --syntax-check before running any playbook.
+    checks:
+      - id: "2.1"
+        description: "node1 responds to ansible ping"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible node1.lab.local -m ping -u vagrant 2>/dev/null | grep -q SUCCESS || ansible node1.lab.local -m ping -i node1.lab.local, -u vagrant 2>/dev/null | grep -q SUCCESS"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "node2 responds to ansible ping"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible node2.lab.local -m ping -u vagrant 2>/dev/null | grep -q SUCCESS || ansible node2.lab.local -m ping -i node2.lab.local, -u vagrant 2>/dev/null | grep -q SUCCESS"
+        expect_rc: 0
+
+  # ── Task 3: Gather System Information ──
+  - id: "3"
+    title: "Gather System Information"
+    points: 1
+    description: |
+      The ansible.builtin.command module executes arbitrary shell commands on
+      remote hosts. It does NOT use a shell, so pipes and redirects do NOT work
+      with it — for those, use ansible.builtin.shell instead.
+
+      Gather system information from all nodes using ad-hoc commands:
+        ansible all -m command -a "hostname" -u vagrant
+        ansible all -m command -a "cat /etc/redhat-release" -u vagrant
+
+      The -a flag passes arguments to the module. For the command module, -a
+      takes the command string to run. You will see output grouped per host,
+      showing return code, stdout, and stderr for each managed node.
+
+      Exam Tip: Use ansible-doc <module> to look up parameters. For example:
+      ansible-doc ansible.builtin.command will show all supported arguments.
+    checks:
+      - id: "3.1"
+        description: "/etc/redhat-release exists on node1"
+        node: node1
+        command: "test -f /etc/redhat-release"
+        expect_rc: 0
+
+  # ── Task 4: Create a File with Ad-Hoc ──
+  - id: "4"
+    title: "Create a File with Ad-Hoc"
+    points: 1
+    description: |
+      The ansible.builtin.copy module can copy files from the control node to
+      managed nodes, or create files directly on managed nodes using the
+      content: parameter. In ad-hoc mode the syntax is:
+        ansible <pattern> -m ansible.builtin.copy \
+          -a "dest=/tmp/ansible-test.txt content='Hello from Ansible'" \
+          -u vagrant
+
+      Run this against the 'workers' group (or use 'all') to create
+      /tmp/ansible-test.txt on every worker node. The copy module is
+      idempotent: running it twice produces the same result without errors.
+
+      Exam Tip: Always use FQCNs (ansible.builtin.copy not just copy). On the
+      exam, using the short module name still works but FQCNs are best practice
+      and show the grader you know the full module path.
+    checks:
+      - id: "4.1"
+        description: "/tmp/ansible-test.txt exists on node1"
+        node: node1
+        command: "test -f /tmp/ansible-test.txt"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "/tmp/ansible-test.txt exists on node2"
+        node: node2
+        command: "test -f /tmp/ansible-test.txt"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "/tmp/ansible-test.txt contains expected content on node1"
+        node: node1
+        command: "grep -q 'Hello from Ansible' /tmp/ansible-test.txt"
+        expect_rc: 0

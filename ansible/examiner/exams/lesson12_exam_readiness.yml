@@ -1,0 +1,674 @@
+---
+id: lesson12_exam_readiness
+title: "Lesson 12: Practice Readiness Review"
+duration: 3600
+passing_score: 100
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node5:
+    hostname: node5.lab.local
+    ip: "192.168.56.24"
+    ssh_user: vagrant
+    groups: [workers]
+
+tasks:
+  # ── Task 1: Quick Setup Challenge ──
+  - id: "1"
+    title: "Quick Setup Challenge"
+    points: 1
+    description: |
+      This is a speed drill. Setup always starts with ansible.cfg and
+      inventory. You should be able to complete this in under 5 minutes
+      with your eyes half-open. Time yourself right now.
+
+      ─────────────────────────────────────────────────────────────────────
+      PRACTICE TIP ROUNDUP — READ BEFORE YOU BEGIN
+      ─────────────────────────────────────────────────────────────────────
+
+      Tip: Read ALL tasks first. Some build on each other.
+      Tip: Spend the first 10 minutes reading every task. Then
+      prioritise: easy wins first, complex tasks last.
+
+      Tip: Partial credit IS given. Complete what you can, never leave a
+      task blank. A playbook with a syntax error still earns points if the
+      structure is correct and it demonstrates you understood the requirement.
+
+      Tip: Store vault password in a file and set vault_password_file in
+      ansible.cfg — this is always step one after creating vault_pass.
+
+      Tip: Install collections with ansible-galaxy collection install
+      <name> -p collections/ — do this while you read the other tasks. Let
+      collection installs run in the background while you write playbooks.
+
+      Tip: System role docs are at /usr/share/doc/rhel-system-roles/ —
+      copy their examples! Do not memorise variable names. Find them in the
+      docs and copy-paste the example, then modify it.
+
+      ─────────────────────────────────────────────────────────────────────
+      THE TASK
+      ─────────────────────────────────────────────────────────────────────
+
+      Create the working directory and all required files:
+
+        mkdir -p /home/vagrant/ansible/exam/roles
+        mkdir -p /home/vagrant/ansible/exam/templates
+
+      Create /home/vagrant/ansible/exam/ansible.cfg:
+
+        [defaults]
+        inventory            = /home/vagrant/ansible/exam/inventory
+        remote_user          = vagrant
+        host_key_checking    = False
+        roles_path           = /home/vagrant/ansible/exam/roles
+        collections_path     = /home/vagrant/ansible/collections
+
+        [privilege_escalation]
+        become               = True
+        become_method        = sudo
+        become_user          = root
+        become_ask_pass      = False
+
+      Create /home/vagrant/ansible/exam/inventory:
+
+        [dev]
+        node1.lab.local
+
+        [prod]
+        node3.lab.local
+
+        [balancers]
+        node5.lab.local
+
+        [webservers:children]
+        dev
+        prod
+
+      Verify the setup:
+        cd /home/vagrant/ansible/exam
+        ansible all -m ping
+        ansible-inventory --list | python3 -m json.tool | head -40
+
+      The [webservers:children] pattern means: the webservers group contains
+      all hosts from the dev and prod child groups. A playbook targeting
+      webservers will run on node1 AND node3.
+
+      STOP THE CLOCK. How long did that take?
+        Under 3 minutes — Excellent. You are well-prepared.
+        3-5 minutes      — Good. Practice a few more times.
+        Over 5 minutes   — Keep drilling this. Setup speed matters.
+    checks:
+      - id: "1.1"
+        description: "exam/ansible.cfg exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/exam/ansible.cfg"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "exam/inventory exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/exam/inventory"
+        expect_rc: 0
+
+      - id: "1.3"
+        description: "ansible.cfg references the inventory file"
+        node: control
+        command: "grep -q 'inventory' /home/vagrant/ansible/exam/ansible.cfg"
+        expect_rc: 0
+
+      - id: "1.4"
+        description: "inventory contains [dev] group"
+        node: control
+        command: "grep -q '\\[dev\\]' /home/vagrant/ansible/exam/inventory"
+        expect_rc: 0
+
+      - id: "1.5"
+        description: "inventory contains [webservers:children] group"
+        node: control
+        command: "grep -q '\\[webservers:children\\]' /home/vagrant/ansible/exam/inventory"
+        expect_rc: 0
+
+  # ── Task 2: Multi-Play Playbook ──
+  - id: "2"
+    title: "Multi-Play Playbook"
+    points: 1
+    description: |
+      A playbook is a list of plays. Each play has its own hosts:, vars:,
+      tasks:, and roles:. Plays run sequentially — the second play does not
+      start until the first is complete across all targeted hosts.
+
+      Multi-play playbooks are powerful because you can target different host
+      groups within a single file, making your automation self-contained.
+
+      Create /home/vagrant/ansible/exam/multi_play.yml:
+
+        ---
+        - name: Install web server on dev nodes
+          hosts: dev
+          tasks:
+            - name: Install httpd
+              ansible.builtin.dnf:
+                name: httpd
+                state: present
+
+            - name: Start and enable httpd
+              ansible.builtin.service:
+                name: httpd
+                state: started
+                enabled: true
+
+            - name: Record server role
+              ansible.builtin.copy:
+                content: "webserver\n"
+                dest: /etc/server_role
+
+        - name: Install database server on prod nodes
+          hosts: prod
+          tasks:
+            - name: Install mariadb-server
+              ansible.builtin.dnf:
+                name: mariadb-server
+                state: present
+
+            - name: Start and enable mariadb
+              ansible.builtin.service:
+                name: mariadb
+                state: started
+                enabled: true
+
+            - name: Record server role
+              ansible.builtin.copy:
+                content: "dbserver\n"
+                dest: /etc/server_role
+
+        - name: Record server role on balancers
+          hosts: balancers
+          tasks:
+            - name: Record server role
+              ansible.builtin.copy:
+                content: "loadbalancer\n"
+                dest: /etc/server_role
+
+      Structure of a play:
+        - name:     — Human-readable description (optional but always include it)
+          hosts:    — Target pattern (group name, hostname, 'all', wildcard)
+          vars:     — Play-level variables (override group/host vars)
+          gather_facts: true/false — Set false to skip fact gathering (faster)
+          become:   — Override privilege escalation for this play
+          tasks:    — List of task objects
+          roles:    — List of role names to apply
+          handlers: — Handlers local to this play
+          pre_tasks: — Tasks that run before roles
+          post_tasks: — Tasks that run after roles and handlers
+
+      Run the playbook:
+        cd /home/vagrant/ansible/exam
+        ansible-playbook multi_play.yml
+
+      Verify:
+        ansible dev -m command -a "rpm -q httpd"
+        ansible prod -m command -a "rpm -q mariadb-server"
+
+      Tip: Partial credit IS given. Complete what you can, never leave a
+      task blank. Write the playbook structure even if you are not sure about
+      one task — the grader checks each check independently.
+    checks:
+      - id: "2.1"
+        description: "exam/multi_play.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/exam/multi_play.yml"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "multi_play.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible/exam && ansible-playbook --syntax-check multi_play.yml"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "httpd is installed on node1 (dev)"
+        node: node1
+        command: "rpm -q httpd"
+        expect_rc: 0
+
+      - id: "2.4"
+        description: "mariadb-server is installed on node3 (prod)"
+        node: node3
+        command: "rpm -q mariadb-server"
+        expect_rc: 0
+
+  # ── Task 3: Template with Facts ──
+  - id: "3"
+    title: "Template with Facts"
+    points: 1
+    description: |
+      Jinja2 templates combined with Ansible facts are one of the most powerful
+      patterns for dynamic configuration management. Every host exposes hundreds
+      of facts via ansible_facts — use them to create host-specific output
+      without writing separate files for each host.
+
+      Commonly used facts for reports and config files:
+        ansible_hostname              — Short hostname (e.g. node1)
+        ansible_fqdn                  — Fully qualified name (e.g. node1.lab.local)
+        ansible_default_ipv4.address  — Primary IPv4 address
+        ansible_memtotal_mb           — Total RAM in MB
+        ansible_processor_vcpus       — Number of vCPUs
+        ansible_distribution          — OS name (e.g. AlmaLinux)
+        ansible_distribution_version  — OS version (e.g. 9.3)
+        ansible_kernel                — Running kernel version
+        ansible_uptime_seconds        — Seconds since last boot
+        ansible_date_time.iso8601     — Current date/time in ISO 8601 format
+
+      Create /home/vagrant/ansible/exam/templates/report.j2:
+
+        ========================================
+        SYSTEM REPORT — Generated by Ansible
+        ========================================
+        Hostname:     {{ ansible_fqdn }}
+        Short name:   {{ ansible_hostname }}
+        IP Address:   {{ ansible_default_ipv4.address }}
+        OS:           {{ ansible_distribution }} {{ ansible_distribution_version }}
+        Kernel:       {{ ansible_kernel }}
+        Memory (MB):  {{ ansible_memtotal_mb }}
+        vCPUs:        {{ ansible_processor_vcpus }}
+        Generated:    {{ ansible_date_time.iso8601 }}
+        ========================================
+
+      Create /home/vagrant/ansible/exam/report.yml:
+
+        ---
+        - name: Deploy system report to all lab hosts
+          hosts: lab
+          tasks:
+            - name: Generate system report from template
+              ansible.builtin.template:
+                src: templates/report.j2
+                dest: /root/system-report.txt
+                owner: root
+                group: root
+                mode: '0644'
+
+      The template module:
+        - src:  — Path to the .j2 template file (relative to playbook dir
+                  or absolute path)
+        - dest: — Destination path on the remote host
+        - The file is rendered per-host, so each managed node gets its own
+          unique report with that host's facts
+
+      Run the playbook:
+        cd /home/vagrant/ansible/exam
+        ansible-playbook report.yml
+
+      Verify:
+        ansible lab -m command -a "cat /root/system-report.txt" -b
+
+      Tip: System role docs are at /usr/share/doc/rhel-system-roles/ —
+      copy their examples! The same principle applies to templates: find a
+      working example, copy it, then modify to fit the requirement.
+    checks:
+      - id: "3.1"
+        description: "exam/templates/report.j2 exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/exam/templates/report.j2"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "exam/report.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/exam/report.yml"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "system-report.txt exists on node1"
+        node: node1
+        command: "sudo test -f /root/system-report.txt"
+        expect_rc: 0
+
+      - id: "3.4"
+        description: "system-report.txt contains node1 hostname"
+        node: node1
+        command: "sudo grep -qi 'node1' /root/system-report.txt"
+        expect_rc: 0
+
+  # ── Task 4: Role from Scratch ──
+  - id: "4"
+    title: "Role from Scratch"
+    points: 1
+    description: |
+      This is a timed drill. You will need to create a working role from
+      scratch in 10-15 minutes. The steps are always the same — burn
+      them into muscle memory.
+
+      TARGET TIME: Under 15 minutes. Start your timer.
+
+      ─────────────────────────────────────────────────────────────────────
+      THE ROLE: motd
+      Deploys a dynamic Message of the Day to /etc/motd using a template.
+      ─────────────────────────────────────────────────────────────────────
+
+      Pro Tip: Use ansible-galaxy init to create role skeleton — memorize the
+      directory structure. Never create role directories by hand.
+
+      Step 1 — Scaffold the role (30 seconds):
+        cd /home/vagrant/ansible/exam
+        ansible-galaxy init roles/motd
+
+      Step 2 — Write the template (2 minutes):
+        Create roles/motd/templates/motd.j2:
+
+          ============================================================
+          Welcome to {{ ansible_fqdn }}
+          ============================================================
+          OS:      {{ ansible_distribution }} {{ ansible_distribution_version }}
+          IP:      {{ ansible_default_ipv4.address }}
+          Memory:  {{ ansible_memtotal_mb }} MB
+          vCPUs:   {{ ansible_processor_vcpus }}
+          ============================================================
+          This system is managed by Ansible. Unauthorised access is
+          prohibited and monitored.
+          ============================================================
+
+      Step 3 — Write tasks/main.yml (3 minutes):
+
+          ---
+          - name: Deploy MOTD template
+            ansible.builtin.template:
+              src: motd.j2
+              dest: /etc/motd
+              owner: root
+              group: root
+              mode: '0644'
+            notify: Reload motd
+
+      Step 4 — Write handlers/main.yml (1 minute):
+
+          ---
+          - name: Reload motd
+            ansible.builtin.debug:
+              msg: "MOTD updated on {{ ansible_hostname }}"
+
+      Note: /etc/motd takes effect immediately on next login — no service
+      restart needed. The handler here is for demonstration purposes. In a
+      real scenario you might restart sshd or run a notification command.
+
+      Step 5 — Write the playbook (2 minutes):
+        Create /home/vagrant/ansible/exam/motd.yml:
+
+          ---
+          - name: Deploy MOTD using motd role on all lab hosts
+            hosts: lab
+            roles:
+              - motd
+
+      Step 6 — Syntax check and run (2 minutes):
+        cd /home/vagrant/ansible/exam
+        ansible-playbook --syntax-check motd.yml
+        ansible-playbook motd.yml
+
+      Step 7 — Verify (1 minute):
+        ssh vagrant@node1.lab.local cat /etc/motd
+
+      STOP THE CLOCK.
+
+      Tip: Partial credit IS given. Complete what you can, never leave a
+      task blank. Even if you only complete the scaffold and the tasks file, you
+      earn partial points. Always do SOMETHING for every task.
+    checks:
+      - id: "4.1"
+        description: "exam/roles/motd/tasks directory exists on control"
+        node: control
+        command: "test -d /home/vagrant/ansible/exam/roles/motd/tasks"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "exam/roles/motd/tasks/main.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/exam/roles/motd/tasks/main.yml"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "exam/motd.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/exam/motd.yml"
+        expect_rc: 0
+
+      - id: "4.4"
+        description: "motd.yml passes syntax check from exam directory"
+        node: control
+        command: "cd /home/vagrant/ansible/exam && ansible-playbook --syntax-check motd.yml"
+        expect_rc: 0
+
+  # ── Task 5: Vault + Users ──
+  - id: "5"
+    title: "Vault + Users"
+    points: 1
+    description: |
+      This task drills the vault + user creation pattern. It combines three
+      skills:
+        1. Creating a vault password file
+        2. Creating a vault-encrypted variables file
+        3. Using vaulted variables with password_hash to create users
+
+      TARGET TIME: Under 10 minutes.
+
+      Pro Tip: ansible-vault create/edit/view/encrypt/decrypt/rekey — know all
+      of these. For this task you need create and view.
+
+      Tip: Store vault password in a file and set vault_password_file in
+      ansible.cfg — saves time on every subsequent command.
+
+      Step 1 — Create the vault password file (30 seconds):
+        echo 'drillpass1' > /home/vagrant/ansible/exam/vault_pass
+        chmod 600 /home/vagrant/ansible/exam/vault_pass
+
+      Step 2 — Add vault_password_file to exam/ansible.cfg under [defaults]:
+        vault_password_file = /home/vagrant/ansible/exam/vault_pass
+
+      Step 3 — Create the encrypted credentials file (2 minutes):
+        cd /home/vagrant/ansible/exam
+        ansible-vault create credentials.yml --vault-password-file vault_pass
+
+      Inside the editor, type:
+        user_pass: "exam123"
+
+      Save and quit (:wq in vi).
+
+      Step 4 — Verify the encryption:
+        head -1 credentials.yml
+        # Should show: $ANSIBLE_VAULT;1.1;AES256
+
+        ansible-vault view credentials.yml
+        # Should show: user_pass: exam123
+
+      Step 5 — Create the playbook (5 minutes):
+        Create /home/vagrant/ansible/exam/vault_users.yml:
+
+          ---
+          - name: Create labuser on all lab hosts using vaulted password
+            hosts: lab
+            vars_files:
+              - credentials.yml
+            tasks:
+              - name: Create labuser with hashed password from vault
+                ansible.builtin.user:
+                  name: labuser
+                  password: "{{ user_pass | password_hash('sha512') }}"
+                  shell: /bin/bash
+                  state: present
+                  create_home: true
+
+      Step 6 — Run the playbook:
+        cd /home/vagrant/ansible/exam
+        ansible-playbook vault_users.yml
+
+      Step 7 — Verify:
+        ansible lab -m command -a "id labuser" -b
+
+      The password_hash('sha512') filter produces a crypt(3) SHA-512 hash
+      that Linux stores in /etc/shadow. The actual hash string starts with $6$.
+      Without this filter, Ansible would store the plaintext password, which
+      Linux rejects (it expects a hash, not plaintext).
+
+      STOP THE CLOCK.
+    checks:
+      - id: "5.1"
+        description: "exam/vault_pass file exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/exam/vault_pass"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "exam/credentials.yml is vault-encrypted"
+        node: control
+        command: "head -1 /home/vagrant/ansible/exam/credentials.yml"
+        expect_stdout_contains: "$ANSIBLE_VAULT"
+
+      - id: "5.3"
+        description: "labuser exists on node1"
+        node: node1
+        command: "id labuser"
+        expect_rc: 0
+
+  # ── Task 6: Error Handling ──
+  - id: "6"
+    title: "Error Handling"
+    points: 1
+    description: |
+      Ansible stops a play when a task fails by default. The block/rescue/always
+      structure gives you fine-grained control over failure handling — similar to
+      try/except/finally in Python or try/catch/finally in Java.
+
+      Structure:
+
+        tasks:
+          - name: Descriptive name for the block
+            block:
+              - name: Task that might fail
+                <module>: ...
+
+              - name: Another task in the block
+                <module>: ...
+
+            rescue:
+              - name: Runs ONLY if something in block failed
+                <module>: ...
+
+            always:
+              - name: Runs regardless of success or failure
+                <module>: ...
+
+      Key rules:
+        - block: tasks run in order. If ANY task fails, the rest of the block
+          is skipped and rescue: runs.
+        - rescue: only runs when the block fails. If the block succeeds,
+          rescue is skipped entirely.
+        - always: ALWAYS runs, whether the block succeeded or failed.
+          Use it for cleanup, notifications, or status files.
+        - After rescue: runs successfully, the play continues (Ansible treats
+          the block as recovered). If rescue: also fails, the play stops.
+
+      Practical uses:
+        - block: try to start a service; rescue: install it if missing
+        - block: complex multi-step operation; always: write a completion log
+        - block: check preconditions; rescue: send an alert and continue
+
+      Create /home/vagrant/ansible/exam/error_handling.yml:
+
+        ---
+        - name: Demonstrate block/rescue/always error handling
+          hosts: node1.lab.local
+          tasks:
+            - name: Service management with error handling
+              block:
+                - name: Attempt to start a non-existent service
+                  ansible.builtin.service:
+                    name: nonexistent_service_xyz
+                    state: started
+
+              rescue:
+                - name: Block failed — write recovery file
+                  ansible.builtin.copy:
+                    content: "Service not found\n"
+                    dest: /tmp/error-recovered.txt
+                    mode: '0644'
+
+              always:
+                - name: Write deployment complete marker
+                  ansible.builtin.copy:
+                    content: "Deployment complete\n"
+                    dest: /tmp/deploy-complete.txt
+                    mode: '0644'
+
+      What will happen when you run this playbook:
+        1. Ansible tries to start nonexistent_service_xyz — this FAILS
+        2. Because of the failure, rescue: runs:
+             - /tmp/error-recovered.txt is created with "Service not found"
+        3. always: runs regardless:
+             - /tmp/deploy-complete.txt is created with "Deployment complete"
+        4. Because rescue: succeeded, the play completes without an overall
+           failure. No red FAILED message at the end.
+
+      Run the playbook:
+        cd /home/vagrant/ansible/exam
+        ansible-playbook error_handling.yml
+
+      Verify on node1:
+        cat /tmp/error-recovered.txt   # Service not found
+        cat /tmp/deploy-complete.txt   # Deployment complete
+
+      Tip: Partial credit IS given. Complete what you can, never leave a
+      task blank. The block/rescue/always pattern is well-documented in
+      ansible-doc — you can check the structure with:
+        ansible-doc -t keyword block
+
+      Pro Tip: Use ansible-galaxy init to create role skeleton — memorize the
+      directory structure. Similarly, memorize the block/rescue/always structure
+      as a template you can reproduce from memory in under 2 minutes.
+    checks:
+      - id: "6.1"
+        description: "exam/error_handling.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/exam/error_handling.yml"
+        expect_rc: 0
+
+      - id: "6.2"
+        description: "error_handling.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible/exam && ansible-playbook --syntax-check error_handling.yml"
+        expect_rc: 0
+
+      - id: "6.3"
+        description: "/tmp/error-recovered.txt exists on node1 (rescue block ran)"
+        node: node1
+        command: "test -f /tmp/error-recovered.txt"
+        expect_rc: 0
+
+      - id: "6.4"
+        description: "/tmp/deploy-complete.txt exists on node1 (always block ran)"
+        node: node1
+        command: "test -f /tmp/deploy-complete.txt"
+        expect_rc: 0

@@ -1,0 +1,392 @@
+---
+id: lesson10_vault
+title: "Lesson 10: Ansible Vault"
+duration: 3600
+passing_score: 100
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node5:
+    hostname: node5.lab.local
+    ip: "192.168.56.24"
+    ssh_user: vagrant
+    groups: [workers]
+
+tasks:
+  # ── Task 1: Create a Vault Password File ──
+  - id: "1"
+    title: "Create a Vault Password File"
+    points: 1
+    description: |
+      Ansible Vault encrypts sensitive data — passwords, API keys, certificates —
+      so they can be safely stored in version control alongside your playbooks.
+      The encryption uses AES-256 by default, which is strong enough for most
+      purposes.
+
+      Every vault-encrypted file requires a password to decrypt. You can supply
+      it in three ways:
+        1. Interactively: Ansible prompts you (--ask-vault-pass)
+        2. Via command-line flag: --vault-password-file /path/to/file
+        3. Via ansible.cfg: vault_password_file = /path/to/file (best practice)
+
+      In practice, using a password FILE is strongly preferred because:
+        - It eliminates typing the password on every ansible-playbook run
+        - It works non-interactively in scripts
+        - You can configure it once in ansible.cfg and forget about the flag
+
+      Pro Tip: Store vault password in a file and set vault_password_file in
+      ansible.cfg — this is the recommended workflow. Add this line to your
+      [defaults] section:
+        vault_password_file = /home/vagrant/ansible/vault_pass
+
+      Create the vault password file:
+        echo 'letmein42' > /home/vagrant/ansible/vault_pass
+        chmod 600 /home/vagrant/ansible/vault_pass
+
+      The chmod 600 is critical. If the file is world-readable, anyone on the
+      system can steal your vault password. Ansible will warn (and in strict
+      mode refuse) if the password file has loose permissions.
+
+      Add vault_password_file to ansible.cfg under [defaults]:
+        [defaults]
+        inventory            = /home/vagrant/ansible/inventory
+        remote_user          = vagrant
+        host_key_checking    = False
+        vault_password_file  = /home/vagrant/ansible/vault_pass
+
+        [privilege_escalation]
+        become = True
+
+      With vault_password_file configured, you no longer need to pass
+      --vault-password-file on every command. All vault operations
+      (create, edit, view, encrypt, decrypt, rekey) will use it automatically.
+
+      Pro Tip: ansible-vault create/edit/view/encrypt/decrypt/rekey — know all
+      of these commands. The most common in practice are create and view.
+    checks:
+      - id: "1.1"
+        description: "vault_pass file exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/vault_pass"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "vault_pass contains the correct password"
+        node: control
+        command: "cat /home/vagrant/ansible/vault_pass"
+        expect_stdout: "letmein42"
+
+  # ── Task 2: Create a Vault-Encrypted File ──
+  - id: "2"
+    title: "Create a Vault-Encrypted File"
+    points: 1
+    description: |
+      ansible-vault create opens your default editor (usually vi) and saves
+      the file encrypted when you write and quit. The file starts empty and
+      you write variables in plain YAML inside the editor — Vault handles the
+      encryption transparently.
+
+      Full list of ansible-vault subcommands:
+        ansible-vault create <file>          — Create a new encrypted file
+        ansible-vault edit <file>            — Edit in-place (decrypts, opens editor, re-encrypts)
+        ansible-vault view <file>            — View decrypted content without editing
+        ansible-vault encrypt <file>         — Encrypt an existing plaintext file in-place
+        ansible-vault decrypt <file>         — Decrypt a file in-place (removes encryption)
+        ansible-vault rekey <file>           — Change the encryption password
+        ansible-vault encrypt_string '...'   — Encrypt a single string value (for inline use)
+
+      Pro Tip: ansible-vault create/edit/view/encrypt/decrypt/rekey — know all
+      of these. You will almost certainly use create and view most often.
+
+      Create the encrypted file using your vault_pass file:
+        cd /home/vagrant/ansible
+        ansible-vault create secret.yml --vault-password-file vault_pass
+
+      Inside the editor, type the following YAML content, then save and quit:
+        db_password: "SuperSecret123"
+        api_key: "abc-def-123"
+
+      To verify it was encrypted:
+        head -1 /home/vagrant/ansible/secret.yml
+        # Should output: $ANSIBLE_VAULT;1.1;AES256
+
+      To view the decrypted content:
+        ansible-vault view secret.yml --vault-password-file vault_pass
+
+      To edit and change a value:
+        ansible-vault edit secret.yml --vault-password-file vault_pass
+
+      The vault file header format is:
+        $ANSIBLE_VAULT;<version>;<cipher>
+        <hex-encoded-encrypted-data>
+
+      Never commit a plaintext password file to git. The encrypted vault file
+      IS safe to commit — that is the whole point of Vault.
+
+      If vault_password_file is set in ansible.cfg, you can omit the flag:
+        ansible-vault create secret.yml
+        ansible-vault view secret.yml
+    checks:
+      - id: "2.1"
+        description: "secret.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/secret.yml"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "secret.yml is vault-encrypted (has ANSIBLE_VAULT header)"
+        node: control
+        command: "head -1 /home/vagrant/ansible/secret.yml"
+        expect_stdout_contains: "$ANSIBLE_VAULT"
+
+      - id: "2.3"
+        description: "secret.yml decrypts and contains db_password variable"
+        node: control
+        command: "ansible-vault view /home/vagrant/ansible/secret.yml --vault-password-file=/home/vagrant/ansible/vault_pass | grep -q 'db_password'"
+        expect_rc: 0
+
+  # ── Task 3: Use Vault Variables in a Playbook ──
+  - id: "3"
+    title: "Use Vault Variables in a Playbook"
+    points: 1
+    description: |
+      A vault-encrypted YAML file is loaded into a playbook using vars_files:,
+      exactly like any regular variables file. Ansible automatically detects
+      the vault header and decrypts it before using the variables.
+
+      Create /home/vagrant/ansible/use_vault.yml:
+
+        ---
+        - name: Deploy application config using vaulted secrets
+          hosts: lab
+          vars_files:
+            - secret.yml
+          tasks:
+            - name: Create app config with db password
+              ansible.builtin.copy:
+                content: |
+                  [database]
+                  password={{ db_password }}
+                  api_key={{ api_key }}
+                dest: /root/app.conf
+                owner: root
+                group: root
+                mode: '0600'
+
+      Key concepts:
+        - vars_files: is a list of variable files. Each is loaded in order.
+          Vault files and plaintext files can be mixed in the same list.
+        - The variables become available in the play's scope exactly like any
+          other variable. No special syntax is needed — just use {{ db_password }}
+          as you would any variable.
+        - The mode: '0600' on the output file prevents other users from reading
+          secrets that were written to disk.
+
+      Run the playbook (with vault_password_file in ansible.cfg this is enough):
+        cd /home/vagrant/ansible
+        ansible-playbook use_vault.yml
+
+      Without vault_password_file in ansible.cfg:
+        ansible-playbook use_vault.yml --vault-password-file vault_pass
+
+      Verify on node1:
+        sudo cat /root/app.conf
+        # Should show password=SuperSecret123
+
+      Tip: Read ALL tasks first before starting. Some tasks build on each
+      other. The vault file and vault_pass created in Tasks 1 and 2 are
+      prerequisites for this task. Always complete vault setup tasks first.
+
+      Tip: Partial credit IS given. Complete what you can, never leave a
+      task blank. If the playbook runs but the file has slightly wrong content,
+      you still earn points for the file existing.
+    checks:
+      - id: "3.1"
+        description: "use_vault.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/use_vault.yml"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "use_vault.yml passes syntax check with vault password"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check use_vault.yml --vault-password-file /home/vagrant/ansible/vault_pass"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "/root/app.conf exists on node1"
+        node: node1
+        command: "sudo test -f /root/app.conf"
+        expect_rc: 0
+
+      - id: "3.4"
+        description: "/root/app.conf contains the vaulted db_password on node1"
+        node: node1
+        command: "sudo grep -q 'SuperSecret123' /root/app.conf"
+        expect_rc: 0
+
+  # ── Task 4: Vault Rekey ──
+  - id: "4"
+    title: "Vault Rekey"
+    points: 1
+    description: |
+      Password rotation is a security requirement in most organisations. When
+      you change your vault password, you do NOT need to decrypt and re-encrypt
+      every file manually. ansible-vault rekey handles this atomically.
+
+      The rekey operation:
+        1. Decrypts the file using the OLD password
+        2. Re-encrypts using the NEW password
+        3. Writes the result back in-place
+
+      The file content is never written to disk in plaintext during this process.
+
+      For this task you will:
+        1. Create a temporary vault password file with password "oldpass"
+        2. Create a new encrypted file using that password
+        3. Rekey the file to use "newpass"
+
+      Step 1 — Create temp password files:
+        echo 'oldpass' > /tmp/old_vault_pass
+        echo 'newpass' > /tmp/new_vault_pass
+        chmod 600 /tmp/old_vault_pass /tmp/new_vault_pass
+
+      Step 2 — Create old_secret.yml encrypted with oldpass:
+        cd /home/vagrant/ansible
+        ansible-vault create old_secret.yml --vault-password-file /tmp/old_vault_pass
+
+      Inside the editor, type:
+        old_variable: "some_sensitive_value"
+
+      Save and quit.
+
+      Step 3 — Rekey to use newpass:
+        ansible-vault rekey old_secret.yml \
+          --vault-password-file /tmp/old_vault_pass \
+          --new-vault-password-file /tmp/new_vault_pass
+
+      Verify the rekey worked (should fail with old password, succeed with new):
+        ansible-vault view old_secret.yml --vault-password-file /tmp/new_vault_pass
+
+      Pro Tip: ansible-vault create/edit/view/encrypt/decrypt/rekey — know all
+      of these. Rekey is used when rotating vault passwords, for example when
+      a team member who knew the vault password leaves the organisation.
+
+      Real-world usage: If a team member who knew the vault password leaves the
+      organisation, you rekey ALL vault files with a new password that the
+      departed employee does not know.
+    checks:
+      - id: "4.1"
+        description: "old_secret.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/old_secret.yml"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "old_secret.yml is vault-encrypted"
+        node: control
+        command: "head -1 /home/vagrant/ansible/old_secret.yml"
+        expect_stdout_contains: "$ANSIBLE_VAULT"
+
+  # ── Task 5: Create Users with Vault Passwords ──
+  - id: "5"
+    title: "Create Users with Vault Passwords"
+    points: 1
+    description: |
+      One of the most common Ansible patterns is: vault-encrypted password
+      variable + user creation with hashed password. This tests both vault
+      skills and the ansible.builtin.user module's password handling.
+
+      Linux requires passwords to be stored as hashes (e.g. SHA-512), never as
+      plaintext. Ansible provides the password_hash filter for this:
+
+        password: "{{ db_password | password_hash('sha512') }}"
+
+      The password_hash filter takes the plaintext string from your vault
+      variable and produces the correct crypt(3) hash format that Linux
+      expects in /etc/shadow.
+
+      Create /home/vagrant/ansible/vault_users.yml:
+
+        ---
+        - name: Create dbadmin user on dbservers using vaulted password
+          hosts: dbservers
+          vars_files:
+            - secret.yml
+          tasks:
+            - name: Create dbadmin user with vaulted password
+              ansible.builtin.user:
+                name: dbadmin
+                password: "{{ db_password | password_hash('sha512') }}"
+                shell: /bin/bash
+                state: present
+                create_home: true
+
+      The dbservers group maps to node3 and node4 in this lab.
+
+      Run the playbook:
+        cd /home/vagrant/ansible
+        ansible-playbook vault_users.yml --vault-password-file vault_pass
+
+      Verify the user was created:
+        ssh vagrant@node3.lab.local id dbadmin
+
+      To verify the password works, try switching to the user:
+        ssh vagrant@node3.lab.local sudo su - dbadmin
+
+      Pro Tip: Store vault password in a file and set vault_password_file in
+      ansible.cfg — this saves you from typing the flag on every single
+      ansible-playbook command, which adds up quickly across multiple tasks.
+
+      Tip: Partial credit IS given. Complete what you can, never leave a
+      task blank. If you create the playbook but cannot run it in time, the
+      grader will still award points for correct playbook structure.
+
+      Additional user module parameters worth knowing:
+        uid: 1500             — Set a specific UID
+        groups: wheel         — Add to supplementary groups
+        append: true          — Append groups instead of replacing
+        expires: -1           — No account expiry
+        password_expire_max: 90  — Require password change every 90 days
+    checks:
+      - id: "5.1"
+        description: "vault_users.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/vault_users.yml"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "vault_users.yml passes syntax check with vault password"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check vault_users.yml --vault-password-file /home/vagrant/ansible/vault_pass"
+        expect_rc: 0
+
+      - id: "5.3"
+        description: "dbadmin user exists on node3 (dbservers)"
+        node: node3
+        command: "id dbadmin"
+        expect_rc: 0

@@ -1,0 +1,445 @@
+---
+id: lesson09_roles
+title: "Lesson 9: Ansible Roles"
+duration: 3600
+passing_score: 100
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node5:
+    hostname: node5.lab.local
+    ip: "192.168.56.24"
+    ssh_user: vagrant
+    groups: [workers]
+
+tasks:
+  # ── Task 1: Understand Role Structure ──
+  - id: "1"
+    title: "Understand Role Structure"
+    points: 1
+    description: |
+      Roles are the primary way to package and reuse Ansible automation. A role
+      is a self-contained directory with a well-defined structure that Ansible
+      recognises automatically. Instead of writing one huge playbook, you break
+      your automation into roles — each doing one thing well.
+
+      The standard role directory layout (created by ansible-galaxy init) is:
+
+        roles/
+        └── my_role/
+            ├── tasks/
+            │   └── main.yml      ← Entry point. All tasks go here (or are
+            │                       imported from other files in tasks/)
+            ├── handlers/
+            │   └── main.yml      ← Handlers notified by tasks (e.g. restart
+            │                       a service when a config file changes)
+            ├── templates/
+            │   └── *.j2          ← Jinja2 templates deployed by the role
+            ├── files/
+            │   └── *             ← Static files copied by the role (no templating)
+            ├── vars/
+            │   └── main.yml      ← High-priority variables (cannot be overridden
+            │                       by inventory or playbook vars)
+            ├── defaults/
+            │   └── main.yml      ← Low-priority defaults (CAN be overridden —
+            │                       this is the right place for role parameters)
+            ├── meta/
+            │   └── main.yml      ← Role metadata: author, license, dependencies
+            └── README.md         ← Human-readable documentation
+
+      Key concepts:
+        - tasks/main.yml is executed first when the role is applied.
+        - handlers/main.yml handlers are available throughout the entire play,
+          not just within the role. This means other roles and tasks can notify
+          them.
+        - defaults/main.yml is the right place for variables that users of your
+          role are expected to override. vars/main.yml is for internal constants.
+        - templates/ and files/ are searched automatically — you do NOT need to
+          specify a full path, just the filename.
+        - meta/main.yml can list role dependencies, which Ansible will install
+          and run before your role.
+
+      Tip: Use ansible-galaxy init to create role skeleton — memorize the
+      directory structure. On the exam you need to create roles quickly and
+      correctly. Run: ansible-galaxy init roles/my_role_name
+
+      Step-by-step instructions:
+
+        1. Create the roles directory:
+             mkdir -p /home/vagrant/ansible/roles
+
+        2. Use ansible-galaxy init to scaffold sample_role:
+             cd /home/vagrant/ansible
+             ansible-galaxy init roles/sample_role
+
+        3. Inspect the output to see all directories created:
+             find roles/sample_role -type f | sort
+
+      You will see every subdirectory and its main.yml stub pre-created. This
+      scaffold is your role template — always start with init, never create
+      directories manually (you will forget one).
+    checks:
+      - id: "1.1"
+        description: "roles/sample_role/tasks directory exists on control"
+        node: control
+        command: "test -d /home/vagrant/ansible/roles/sample_role/tasks"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "roles/sample_role/tasks/main.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/roles/sample_role/tasks/main.yml"
+        expect_rc: 0
+
+      - id: "1.3"
+        description: "roles/sample_role/handlers directory exists on control"
+        node: control
+        command: "test -d /home/vagrant/ansible/roles/sample_role/handlers"
+        expect_rc: 0
+
+      - id: "1.4"
+        description: "roles/sample_role/templates directory exists on control"
+        node: control
+        command: "test -d /home/vagrant/ansible/roles/sample_role/templates"
+        expect_rc: 0
+
+  # ── Task 2: Create a Web Server Role ──
+  - id: "2"
+    title: "Create a Web Server Role"
+    points: 1
+    description: |
+      Now you will build a real, working role. The webserver role will install
+      Apache HTTP Server (httpd), deploy a templated index page, and use a
+      handler to restart the service whenever the template changes.
+
+      Step 1 — Scaffold the role:
+        cd /home/vagrant/ansible
+        ansible-galaxy init roles/webserver
+
+      Step 2 — Write roles/webserver/tasks/main.yml:
+
+        ---
+        - name: Install httpd
+          ansible.builtin.dnf:
+            name: httpd
+            state: present
+
+        - name: Deploy index page from template
+          ansible.builtin.template:
+            src: index.html.j2
+            dest: /var/www/html/index.html
+            mode: '0644'
+          notify: Restart httpd
+
+        - name: Start and enable httpd
+          ansible.builtin.service:
+            name: httpd
+            state: started
+            enabled: true
+
+      Key points:
+        - notify: sends a signal to the named handler. The handler only runs
+          once at the end of the play, even if notified multiple times.
+        - The template src is just the filename — Ansible looks in the role's
+          templates/ directory automatically.
+
+      Step 3 — Write roles/webserver/templates/index.html.j2:
+
+        <html>
+        <body>
+        <h1>Welcome to {{ ansible_fqdn }}</h1>
+        <p>Managed by Ansible</p>
+        </body>
+        </html>
+
+        ansible_fqdn is a magic variable (fact) automatically gathered from
+        the target host. It returns the fully qualified domain name.
+
+      Step 4 — Write roles/webserver/handlers/main.yml:
+
+        ---
+        - name: Restart httpd
+          ansible.builtin.service:
+            name: httpd
+            state: restarted
+
+      The handler name MUST exactly match the string used in notify:. Handlers
+      are idempotent by default — if the task that notified the handler did not
+      make a change (changed=false), Ansible will not re-notify the handler on
+      a subsequent run (the handler stays idle if nothing changed).
+
+      Tip: On the exam, read ALL tasks first. Some build on each other.
+      The role you build here will be reused in Task 3.
+    checks:
+      - id: "2.1"
+        description: "roles/webserver/tasks/main.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/roles/webserver/tasks/main.yml"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "roles/webserver/templates/index.html.j2 exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/roles/webserver/templates/index.html.j2"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "roles/webserver/handlers/main.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/roles/webserver/handlers/main.yml"
+        expect_rc: 0
+
+  # ── Task 3: Use a Role in a Playbook ──
+  - id: "3"
+    title: "Use a Role in a Playbook"
+    points: 1
+    description: |
+      Roles are consumed by playbooks using the roles: key. This is the
+      simplest and most common approach. There are three ways to call a role:
+
+        1. roles: list (classic, runs before tasks:):
+             - hosts: webservers
+               roles:
+                 - webserver
+
+        2. ansible.builtin.import_role (static, resolved at parse time):
+             tasks:
+               - ansible.builtin.import_role:
+                   name: webserver
+
+        3. ansible.builtin.include_role (dynamic, resolved at runtime):
+             tasks:
+               - ansible.builtin.include_role:
+                   name: webserver
+
+      The roles: list style is most common and recommended.
+
+      Create /home/vagrant/ansible/use_role.yml:
+
+        ---
+        - name: Apply webserver role to webservers group
+          hosts: webservers
+          roles:
+            - webserver
+
+      The inventory group 'webservers' maps to node1 and node2 in this lab.
+
+      Ansible resolves the role path from:
+        1. The roles/ directory relative to the playbook
+        2. The roles_path set in ansible.cfg (e.g. /home/vagrant/ansible/roles)
+        3. ~/.ansible/roles
+        4. /etc/ansible/roles
+
+      Always set roles_path in ansible.cfg to point to your project's roles/
+      directory so Ansible finds your custom roles without ambiguity.
+
+      Run the playbook:
+        cd /home/vagrant/ansible
+        ansible-playbook use_role.yml
+
+      After a successful run, httpd will be running and the index page will be
+      deployed on node1 and node2. Verify with:
+        curl http://192.168.56.20/
+        curl http://192.168.56.21/
+
+      Tip: Partial credit IS given. Complete what you can, never leave a
+      task blank. If httpd will not start, submit the playbook anyway — you
+      still get points for the playbook existing and passing syntax check.
+    checks:
+      - id: "3.1"
+        description: "use_role.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/use_role.yml"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "use_role.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check use_role.yml"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "httpd is active on node1"
+        node: node1
+        command: "systemctl is-active httpd"
+        expect_stdout: "active"
+
+      - id: "3.4"
+        description: "index.html contains Welcome on node1"
+        node: node1
+        command: "grep -q 'Welcome to' /var/www/html/index.html"
+        expect_rc: 0
+
+  # ── Task 4: Role Defaults and Overrides ──
+  - id: "4"
+    title: "Role Defaults and Overrides"
+    points: 1
+    description: |
+      Understanding Ansible variable precedence is essential.
+      Roles have two places for variables:
+
+        defaults/main.yml  — LOWEST role priority. These are the role's
+                             "advertised" parameters. Any external source
+                             (inventory vars, group_vars, playbook vars,
+                             extra-vars) will override these.
+
+        vars/main.yml      — HIGH priority. Only extra-vars (-e on the command
+                             line) and block/task vars can override these.
+                             Use this for internal constants, not role params.
+
+      The full Ansible variable precedence (lowest to highest, abbreviated):
+        1. role defaults
+        2. inventory vars / group_vars / host_vars
+        3. playbook vars
+        4. role vars
+        5. task vars / set_fact
+        6. extra-vars (-e)
+
+      Add defaults/main.yml to the webserver role:
+
+        ---
+        http_port: 80
+        web_root: /var/www/html
+
+      Overriding a default in a playbook — two common patterns:
+
+        Pattern A: vars: in the play
+          - hosts: node5
+            vars:
+              http_port: 8080
+            roles:
+              - webserver
+
+        Pattern B: role parameter syntax
+          - hosts: node5
+            roles:
+              - role: webserver
+                vars:
+                  http_port: 8080
+
+      Create /home/vagrant/ansible/role_override.yml that applies the webserver
+      role to node5 with http_port overridden to 8080:
+
+        ---
+        - name: Apply webserver role with custom port to node5
+          hosts: node5
+          vars:
+            http_port: 8080
+          roles:
+            - webserver
+
+      Note: The webserver role tasks/main.yml does not yet USE http_port in its
+      service configuration (that would require modifying httpd.conf via a
+      template). This task focuses on understanding how the override mechanism
+      works — setting the variable is the key skill being tested.
+
+      Tip: Store vault password in a file and set vault_password_file in
+      ansible.cfg — this eliminates the need to type --vault-password-file on
+      every command. Add: vault_password_file = /home/vagrant/ansible/vault_pass
+    checks:
+      - id: "4.1"
+        description: "roles/webserver/defaults/main.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/roles/webserver/defaults/main.yml"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "role_override.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/role_override.yml"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "role_override.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check role_override.yml"
+        expect_rc: 0
+
+  # ── Task 5: Install Roles from Requirements ──
+  - id: "5"
+    title: "Install Roles from Requirements"
+    points: 1
+    description: |
+      You will often need to install community roles from Ansible Galaxy. The
+      professional way is to use a requirements.yml file
+      so the install is repeatable and version-pinned.
+
+      The requirements.yml format for roles:
+
+        ---
+        roles:
+          - name: geerlingguy.firewall
+            version: "2.6.0"       # optional — omit for latest
+
+          - src: https://github.com/geerlingguy/ansible-role-firewall
+            name: my_firewall      # optional alias
+
+          - name: geerlingguy.ntp  # install multiple roles at once
+
+      For this task, create /home/vagrant/ansible/roles/requirements.yml with
+      the geerlingguy.firewall role:
+
+        ---
+        roles:
+          - name: geerlingguy.firewall
+
+      Then install it:
+        cd /home/vagrant/ansible
+        ansible-galaxy install -r roles/requirements.yml -p roles/
+
+      The -p roles/ flag installs into your project's roles/ directory instead
+      of ~/.ansible/roles. This keeps everything local to your project and
+      ensures ansible.cfg roles_path picks it up.
+
+      After installation, verify:
+        ansible-galaxy list
+        ls roles/geerlingguy.firewall/
+
+      Tip: Use ansible-galaxy init to create role skeleton — memorize the
+      directory structure. In some environments, ansible-galaxy may need internet
+      access or a local mirror. If the download fails, check with the proctor.
+
+      Tip: Install collections with ansible-galaxy collection install
+      <name> -p collections/ — the same -p pattern applies to collections.
+      Know the difference: roles use ansible-galaxy install, collections use
+      ansible-galaxy collection install.
+
+      If the network is unavailable during the exam, you may need to copy roles
+      from /usr/share/ansible/roles/ or install from a local tarball:
+        ansible-galaxy install my_role.tar.gz -p roles/
+    checks:
+      - id: "5.1"
+        description: "roles/requirements.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/roles/requirements.yml"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "geerlingguy.firewall role is installed"
+        node: control
+        command: "test -d /home/vagrant/ansible/roles/geerlingguy.firewall || ansible-galaxy list 2>/dev/null | grep -q 'geerlingguy.firewall'"
+        expect_rc: 0

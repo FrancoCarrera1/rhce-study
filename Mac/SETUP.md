@@ -1,4 +1,4 @@
-# RHCE Lab Setup - macOS
+# Lab Setup - macOS
 
 ## Prerequisites
 
@@ -32,8 +32,20 @@ vagrant plugin install vagrant-libvirt
 
 ## Setup
 
+### 1. Reassemble the Vagrant box
+
+The AlmaLinux 9 box is shipped as split zip parts to stay within GitHub's file size limits. Reassemble it before your first `vagrant up`:
+
 ```bash
-cd ~/Documents/rhce-study
+cd Mac/
+cat almalinux9-vmtools.box.zip.part_* > almalinux9-vmtools.box.zip
+unzip almalinux9-vmtools.box.zip
+rm almalinux9-vmtools.box.zip   # optional cleanup
+```
+
+### 2. Start the lab
+
+```bash
 vagrant up
 ```
 

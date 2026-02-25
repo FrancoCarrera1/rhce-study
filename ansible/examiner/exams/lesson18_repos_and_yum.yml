@@ -1,0 +1,437 @@
+---
+id: lesson18_repos_and_yum
+title: "Lesson 18: YUM Repositories"
+duration: 2700
+passing_score: 80
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [webservers]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [dbservers]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [webservers, dbservers]
+
+tasks:
+  # ── Task 1: Create Repo Playbook ──
+  - id: "1"
+    title: "Create Repo Playbook"
+    points: 1
+    description: |
+      YUM repositories tell your systems where to find packages. In Ansible
+      automation you will be given repository URLs and asked to configure them
+      on managed nodes. The correct module is ansible.builtin.yum_repository.
+
+      The key parameters you must know:
+
+        name:        — Internal repo ID (no spaces). Used as the filename base
+                       under /etc/yum.repos.d/. E.g. name: baseos creates
+                       /etc/yum.repos.d/baseos.repo
+        description: — Human-readable label shown by 'yum repolist'
+        baseurl:     — The URL (or path) where the repo metadata lives.
+                       Must point to a directory containing repodata/
+        gpgcheck:    — Set to false (no) to skip GPG signature verification.
+                       On the exam the provided repos often use gpgcheck: false.
+        enabled:     — Set to true (yes) to activate the repo. Defaults to true.
+        file:        — Optional. Name of the .repo file without the extension.
+                       If omitted, Ansible uses the 'name' value.
+
+      Create /home/vagrant/ansible/configure_repos.yml that runs on all managed
+      nodes and configures both the BaseOS and AppStream repositories:
+
+        ---
+        - name: Configure YUM repositories on all managed nodes
+          hosts: all
+          become: true
+          tasks:
+            - name: Configure BaseOS repository
+              ansible.builtin.yum_repository:
+                name: baseos
+                description: AlmaLinux BaseOS
+                baseurl: http://repo.lab.local/almalinux/8/BaseOS/x86_64/os/
+                gpgcheck: false
+                enabled: true
+
+            - name: Configure AppStream repository
+              ansible.builtin.yum_repository:
+                name: appstream
+                description: AlmaLinux AppStream
+                baseurl: http://repo.lab.local/almalinux/8/AppStream/x86_64/os/
+                gpgcheck: false
+                enabled: true
+
+      Adjust the baseurl values to match what the exam provides. The exam task
+      will always give you explicit URLs — use them exactly as written.
+
+      After creating the playbook, run a syntax check:
+        cd /home/vagrant/ansible
+        ansible-playbook --syntax-check configure_repos.yml
+
+      Run the playbook:
+        cd /home/vagrant/ansible
+        ansible-playbook configure_repos.yml
+
+      Verify the .repo files were created on a managed node:
+        ansible all -m command -a "ls /etc/yum.repos.d/"
+        ansible all -m command -a "cat /etc/yum.repos.d/baseos.repo"
+
+      Tip: The yum_repository module is idempotent — running it twice
+      is safe. If a repo already exists with the same name, Ansible updates
+      it to match your desired state. This means you can safely re-run your
+      playbook if you make a mistake and correct it.
+
+      Tip: Always use become: true for repository configuration. Writing
+      to /etc/yum.repos.d/ requires root privileges. Forgetting become is one
+      of the most common exam mistakes.
+    checks:
+      - id: "1.1"
+        description: "configure_repos.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/configure_repos.yml"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "configure_repos.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check configure_repos.yml"
+        expect_rc: 0
+
+      - id: "1.3"
+        description: "configure_repos.yml uses yum_repository module"
+        node: control
+        command: "grep -q 'yum_repository' /home/vagrant/ansible/configure_repos.yml"
+        expect_rc: 0
+
+      - id: "1.4"
+        description: "baseos.repo file exists on node1"
+        node: node1
+        command: "test -f /etc/yum.repos.d/baseos.repo"
+        expect_rc: 0
+
+      - id: "1.5"
+        description: "appstream.repo file exists on node1"
+        node: node1
+        command: "test -f /etc/yum.repos.d/appstream.repo"
+        expect_rc: 0
+
+  # ── Task 2: Package Management ──
+  - id: "2"
+    title: "Package Management"
+    points: 1
+    description: |
+      With repositories configured, you can now install packages on managed
+      nodes. Ansible tasks often pair repository configuration with a follow-
+      up task that installs specific packages from those repositories.
+
+      The ansible.builtin.dnf module (preferred on RHEL 8/9) and the older
+      ansible.builtin.yum module both work for this purpose. Use dnf for new
+      playbooks — it is the correct choice for RHEL 8 and later.
+
+      Common dnf module parameters:
+
+        name:   — Package name or list of package names. Use a YAML list when
+                  installing multiple packages at once (more efficient — one
+                  transaction instead of many).
+        state:  — present or installed (install if not present)
+                  latest (install and upgrade to newest version)
+                  absent or removed (uninstall)
+        update_cache: — Equivalent to 'dnf makecache'. Set to true to refresh
+                  repo metadata before installing. Useful after adding new repos.
+
+      Create /home/vagrant/ansible/install_packages.yml that installs httpd on
+      webservers and mariadb-server on dbservers:
+
+        ---
+        - name: Install httpd on webservers
+          hosts: webservers
+          become: true
+          tasks:
+            - name: Install Apache web server
+              ansible.builtin.dnf:
+                name: httpd
+                state: present
+
+            - name: Start and enable httpd
+              ansible.builtin.service:
+                name: httpd
+                state: started
+                enabled: true
+
+        - name: Install mariadb-server on dbservers
+          hosts: dbservers
+          become: true
+          tasks:
+            - name: Install MariaDB database server
+              ansible.builtin.dnf:
+                name: mariadb-server
+                state: present
+
+            - name: Start and enable mariadb
+              ansible.builtin.service:
+                name: mariadb
+                state: started
+                enabled: true
+
+      Note that node3 belongs to both webservers and dbservers. Ansible will
+      apply both plays to node3 — httpd from the first play and mariadb-server
+      from the second play. This is correct and expected behavior.
+
+      Run a syntax check first:
+        cd /home/vagrant/ansible
+        ansible-playbook --syntax-check install_packages.yml
+
+      Verify package installation on nodes:
+        ansible webservers -m command -a "rpm -q httpd"
+        ansible dbservers -m command -a "rpm -q mariadb-server"
+
+      Tip: When installing multiple packages, use a YAML list under 'name:'
+      rather than multiple separate tasks. One dnf task with a list is more
+      efficient and reads more cleanly:
+        name:
+          - httpd
+          - httpd-tools
+          - mod_ssl
+    checks:
+      - id: "2.1"
+        description: "install_packages.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/install_packages.yml"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "install_packages.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check install_packages.yml"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "install_packages.yml targets webservers group"
+        node: control
+        command: "grep -q 'webservers' /home/vagrant/ansible/install_packages.yml"
+        expect_rc: 0
+
+      - id: "2.4"
+        description: "httpd is installed on node1"
+        node: node1
+        command: "rpm -q httpd"
+        expect_rc: 0
+
+      - id: "2.5"
+        description: "mariadb-server is installed on node2"
+        node: node2
+        command: "rpm -q mariadb-server"
+        expect_rc: 0
+
+  # ── Task 3: Repository GPG Keys ──
+  - id: "3"
+    title: "Repository GPG Keys"
+    points: 1
+    description: |
+      GPG key verification prevents installing tampered packages. You may be
+      asked to configure repositories WITH GPG checking enabled and to import
+      the signing key. This is the production-grade approach used in enterprise
+      environments.
+
+      The ansible.builtin.rpm_key module imports GPG keys into the RPM keyring.
+      Once imported, the key is trusted system-wide.
+
+      Parameters for rpm_key:
+
+        key:   — Path or URL to the GPG key file. Common locations:
+                   /etc/pki/rpm-gpg/RPM-GPG-KEY-*
+                   https://repo.example.com/RPM-GPG-KEY-example
+        state: — present (import the key) or absent (remove the key)
+
+      Create /home/vagrant/ansible/repo_gpg.yml that imports a GPG key and
+      configures a repository with GPG checking enabled:
+
+        ---
+        - name: Configure repository with GPG verification
+          hosts: all
+          become: true
+          tasks:
+            - name: Import AlmaLinux GPG key
+              ansible.builtin.rpm_key:
+                key: /etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux
+                state: present
+
+            - name: Configure BaseOS repo with GPG check enabled
+              ansible.builtin.yum_repository:
+                name: baseos-gpg
+                description: AlmaLinux BaseOS with GPG
+                baseurl: http://repo.lab.local/almalinux/8/BaseOS/x86_64/os/
+                gpgcheck: true
+                gpgkey: file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux
+                enabled: true
+
+            - name: Verify repos are enabled
+              ansible.builtin.command:
+                cmd: yum repolist enabled
+              register: repolist_output
+              changed_when: false
+
+            - name: Show enabled repositories
+              ansible.builtin.debug:
+                var: repolist_output.stdout_lines
+
+      Key points:
+        - The gpgkey: parameter in yum_repository points to the key file using
+          a file:// URI or an http:// URL. It tells dnf WHERE to find the key
+          when auto-importing (different from rpm_key which pre-imports it).
+        - changed_when: false on the command module prevents the task from
+          being reported as "changed" every time — checking status is read-only.
+        - register: captures the module output into a variable for later use.
+
+      Syntax check:
+        cd /home/vagrant/ansible
+        ansible-playbook --syntax-check repo_gpg.yml
+
+      Tip: On the exam the GPG key file is usually already on the system
+      under /etc/pki/rpm-gpg/. Check what keys exist with:
+        ls /etc/pki/rpm-gpg/
+      Use the exact path shown. If the key is not present, the exam task will
+      provide a URL — use that URL directly as the 'key:' value.
+    checks:
+      - id: "3.1"
+        description: "repo_gpg.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/repo_gpg.yml"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "repo_gpg.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check repo_gpg.yml"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "repo_gpg.yml uses rpm_key module"
+        node: control
+        command: "grep -q 'rpm_key' /home/vagrant/ansible/repo_gpg.yml"
+        expect_rc: 0
+
+      - id: "3.4"
+        description: "repo_gpg.yml configures gpgcheck"
+        node: control
+        command: "grep -q 'gpgcheck' /home/vagrant/ansible/repo_gpg.yml"
+        expect_rc: 0
+
+  # ── Task 4: Clean and Verify ──
+  - id: "4"
+    title: "Clean and Verify"
+    points: 1
+    description: |
+      After configuring repositories it is good practice to clear the cached
+      metadata and verify that packages can be resolved from the new repos.
+      This is especially important after changing repo URLs or after adding
+      repos that may have stale cached data.
+
+      The ansible.builtin.command module is used to run yum/dnf commands that
+      do not have a dedicated Ansible module. Cache-related operations are a
+      common use case.
+
+      Create /home/vagrant/ansible/repo_verify.yml that cleans the dnf cache
+      and verifies package availability on all managed nodes:
+
+        ---
+        - name: Clean YUM cache and verify repositories
+          hosts: all
+          become: true
+          tasks:
+            - name: Clean dnf cache
+              ansible.builtin.command:
+                cmd: dnf clean all
+              changed_when: true
+
+            - name: Rebuild dnf cache
+              ansible.builtin.command:
+                cmd: dnf makecache
+              changed_when: true
+
+            - name: List all enabled repositories
+              ansible.builtin.command:
+                cmd: dnf repolist
+              register: repolist
+              changed_when: false
+
+            - name: Display enabled repositories
+              ansible.builtin.debug:
+                var: repolist.stdout_lines
+
+            - name: Check that httpd package is available
+              ansible.builtin.command:
+                cmd: dnf info httpd
+              register: httpd_info
+              changed_when: false
+              failed_when: httpd_info.rc != 0
+
+            - name: Confirm httpd is resolvable
+              ansible.builtin.debug:
+                msg: "httpd package is available from configured repositories"
+
+      Key concepts:
+        changed_when: true  — For dnf clean/makecache, we always consider them
+                              "changed" because they modify cached state. Ansible
+                              cannot detect the actual before/after difference.
+        changed_when: false — For read-only commands like dnf repolist or dnf
+                              info. These do not change system state.
+        failed_when:        — Override the default failure condition. Here we
+                              fail only if the return code is non-zero. Normally
+                              Ansible would fail on any non-zero rc anyway, but
+                              being explicit documents intent clearly.
+
+      Run a syntax check:
+        cd /home/vagrant/ansible
+        ansible-playbook --syntax-check repo_verify.yml
+
+      Run it (make sure configure_repos.yml has already been run first):
+        cd /home/vagrant/ansible
+        ansible-playbook repo_verify.yml
+
+      Tip: 'dnf clean all' removes all cached data: metadata, packages,
+      headers, and dbcache. 'dnf makecache' then re-downloads metadata from
+      all enabled repos. If a repo URL is wrong, makecache will fail — this
+      is a quick way to validate your repo configuration is correct.
+
+      Tip: When using the command or shell module, always set changed_when
+      appropriately. Graders and reviewers expect idempotent playbooks. A
+      playbook that always reports "changed" on read-only commands signals
+      poor quality and may cost you points.
+    checks:
+      - id: "4.1"
+        description: "repo_verify.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/repo_verify.yml"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "repo_verify.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check repo_verify.yml"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "repo_verify.yml contains dnf clean or yum clean command"
+        node: control
+        command: "grep -qE 'dnf clean|yum clean' /home/vagrant/ansible/repo_verify.yml"
+        expect_rc: 0
+
+      - id: "4.4"
+        description: "repo_verify.yml uses changed_when"
+        node: control
+        command: "grep -q 'changed_when' /home/vagrant/ansible/repo_verify.yml"
+        expect_rc: 0

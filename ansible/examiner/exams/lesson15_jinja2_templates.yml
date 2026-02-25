@@ -1,0 +1,482 @@
+---
+id: lesson15_jinja2_templates
+title: "Lesson 15: Jinja2 Templates & Loops"
+duration: 3600
+passing_score: 100
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [dev]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [test]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [prod, webservers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [prod, webservers]
+
+tasks:
+  # ── Task 1: Create a Basic Jinja2 Template ──
+  - id: "1"
+    title: "Create a Basic Jinja2 Template"
+    points: 1
+    description: |
+      PREREQUISITE: This lesson assumes /home/vagrant/ansible/ansible.cfg and
+      a working inventory file already exist on the control node, created during
+      lessons 01 and 02. All playbooks should be written in /home/vagrant/ansible/.
+
+      Jinja2 is a Python templating engine that Ansible uses to render dynamic
+      content. Template files use the .j2 extension by convention. Inside a
+      template, {{ variable }} outputs a value — Ansible substitutes it with the
+      actual content at render time. The most common source of values is Ansible
+      facts, which are host-specific data gathered automatically by the setup
+      module at the start of each play.
+
+      Common facts you will use with Ansible templates:
+        ansible_fqdn                  — fully-qualified domain name (node1.lab.local)
+        ansible_hostname              — short hostname (node1)
+        ansible_distribution          — OS name (RedHat, CentOS, Rocky)
+        ansible_distribution_version  — OS version (9.3)
+        ansible_memtotal_mb           — total RAM in megabytes
+        ansible_default_ipv4.address  — primary IP address
+
+      Step 1 — Create the templates directory and the template file:
+
+        mkdir -p /home/vagrant/ansible/templates
+
+      Create /home/vagrant/ansible/templates/motd.j2 with this content:
+
+        Welcome to {{ ansible_fqdn }}
+        OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+        Memory: {{ ansible_memtotal_mb }} MB
+
+      Step 2 — Create the playbook /home/vagrant/ansible/motd.yml:
+
+        ---
+        - name: Deploy MOTD template to all hosts
+          hosts: all
+          become: true
+          tasks:
+            - name: Deploy message of the day
+              ansible.builtin.template:
+                src: templates/motd.j2
+                dest: /etc/motd
+                owner: root
+                group: root
+                mode: '0644'
+
+      The ansible.builtin.template module reads your .j2 file on the control
+      node, renders it (substituting all {{ }} expressions using the current
+      host's facts and variables), then copies the rendered result to dest: on
+      the managed host. Each host gets its own customized version of the file —
+      node1 sees its own hostname, node2 sees its own, and so on.
+
+      The src: path is relative to the playbook directory. Keeping templates in
+      a templates/ subdirectory is the standard Ansible layout.
+
+      Run it with: ansible-playbook /home/vagrant/ansible/motd.yml
+      Verify:      ansible all -m command -a "cat /etc/motd"
+    checks:
+      - id: "1.1"
+        description: "templates/motd.j2 template file exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/templates/motd.j2"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "motd.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/motd.yml"
+        expect_rc: 0
+
+      - id: "1.3"
+        description: "motd.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check motd.yml"
+        expect_rc: 0
+
+      - id: "1.4"
+        description: "/etc/motd on node1 contains the hostname"
+        node: node1
+        command: "grep -q 'node1' /etc/motd"
+        expect_rc: 0
+
+  # ── Task 2: Use Jinja2 for Loops in Templates ──
+  - id: "2"
+    title: "Use Jinja2 for Loops in Templates"
+    points: 1
+    description: |
+      Jinja2 for loops let you generate repetitive content from a list without
+      writing each item by hand. The syntax is:
+
+        {% for item in my_list %}
+        - {{ item }}
+        {% endfor %}
+
+      The {% %} delimiters are Jinja2 control-flow tags — they do NOT produce
+      output themselves. Only {{ }} produces output. The for and endfor lines
+      are invisible in the rendered file; only the body between them appears,
+      once per item in the list.
+
+      Variables for a play can be defined inline in the playbook using vars:,
+      passed at the command line with -e, or stored in group_vars/ / host_vars/.
+      For practice tasks, inline vars: is the most explicit and grader-friendly
+      approach.
+
+      Step 1 — Create /home/vagrant/ansible/templates/packages_report.j2:
+
+        Installed Packages Report for {{ inventory_hostname }}
+        {% for pkg in packages %}
+        - {{ pkg }}
+        {% endfor %}
+
+      Note: inventory_hostname is the name of the host as it appears in the
+      inventory file — not the FQDN. This is different from ansible_fqdn.
+
+      Step 2 — Create /home/vagrant/ansible/pkg_report.yml:
+
+        ---
+        - name: Deploy packages report template to dev group
+          hosts: dev
+          become: true
+          vars:
+            packages:
+              - httpd
+              - php
+              - mariadb-server
+          tasks:
+            - name: Deploy packages report
+              ansible.builtin.template:
+                src: templates/packages_report.j2
+                dest: /tmp/pkg_report.txt
+                mode: '0644'
+
+      Run it with: ansible-playbook /home/vagrant/ansible/pkg_report.yml
+      Verify:      ansible dev -m command -a "cat /tmp/pkg_report.txt"
+    checks:
+      - id: "2.1"
+        description: "templates/packages_report.j2 template exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/templates/packages_report.j2"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "pkg_report.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/pkg_report.yml"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "pkg_report.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check pkg_report.yml"
+        expect_rc: 0
+
+      - id: "2.4"
+        description: "/tmp/pkg_report.txt on node1 contains 'httpd'"
+        node: node1
+        command: "grep -q 'httpd' /tmp/pkg_report.txt"
+        expect_rc: 0
+
+  # ── Task 3: Generate Hosts File with hostvars Loop ──
+  - id: "3"
+    title: "Generate Hosts File with hostvars Loop"
+    points: 1
+    description: |
+      This is a common pattern for host file generation. You will be asked
+      to generate a custom hosts file (/etc/myhosts or similar) that lists
+      the IP address, FQDN, and short hostname for every managed node.
+
+      The key Ansible variables that make this work:
+
+        groups['all']     — A list of every host name in the inventory.
+                            Iterating over this gives you every managed node.
+
+        hostvars          — A dictionary of dictionaries. The outer key is the
+                            host name (matching entries in groups['all']). The
+                            inner keys are all facts and variables for that host.
+                            Example: hostvars['node2']['ansible_default_ipv4']['address']
+
+      The template accesses data about OTHER hosts (not just the current host)
+      by combining the groups loop with hostvars lookups. This is what makes
+      it powerful: a single template rendered on node1 can produce a complete
+      list of all nodes.
+
+      WHY TWO PLAYS? Ansible only populates hostvars for a host after it has
+      connected to that host and run the setup module (fact gathering). If your
+      play targets only the dev group, Ansible never connects to node3 or node4,
+      so hostvars['node3'] is empty and the loop produces blank lines. The
+      two-play approach fixes this:
+
+        Play 1 — hosts: all, gather_facts: true
+          This connects to every host, runs setup, and populates hostvars
+          for all nodes. No tasks needed — fact gathering alone is enough.
+
+        Play 2 — hosts: dev, template task
+          By the time this play runs, hostvars is fully populated for ALL
+          hosts. The template can safely reference hostvars[host] for any
+          host in groups['all'].
+
+      Step 1 — Create /home/vagrant/ansible/templates/hosts.j2:
+
+        127.0.0.1 localhost localhost.localdomain localhost4 localhost4.localdomain4
+        ::1 localhost localhost.localdomain localhost6 localhost6.localdomain6
+        {% for host in groups['all'] %}
+        {{ hostvars[host]['ansible_default_ipv4']['address'] }} {{ hostvars[host]['ansible_fqdn'] }} {{ hostvars[host]['ansible_hostname'] }}
+        {% endfor %}
+
+      Step 2 — Create /home/vagrant/ansible/hosts_file.yml with two plays:
+
+        ---
+        - name: Gather facts from all hosts
+          hosts: all
+          gather_facts: true
+
+        - name: Deploy hosts file to dev group
+          hosts: dev
+          become: true
+          tasks:
+            - name: Deploy /etc/myhosts from template
+              ansible.builtin.template:
+                src: templates/hosts.j2
+                dest: /etc/myhosts
+                owner: root
+                group: root
+                mode: '0644'
+
+      Pro Tip: This exact two-play pattern (gather from all, deploy to subset)
+      is the solution any time you need to generate a file that lists ALL managed
+      hosts but only deploy it to SOME hosts. Memorise it.
+
+      Run it with: ansible-playbook /home/vagrant/ansible/hosts_file.yml
+      Verify:      ansible dev -m command -a "cat /etc/myhosts"
+    checks:
+      - id: "3.1"
+        description: "templates/hosts.j2 template exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/templates/hosts.j2"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "hosts_file.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/hosts_file.yml"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "hosts_file.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check hosts_file.yml"
+        expect_rc: 0
+
+      - id: "3.4"
+        description: "/etc/myhosts on node1 contains an entry for node1"
+        node: node1
+        command: "grep -q 'node1' /etc/myhosts"
+        expect_rc: 0
+
+      - id: "3.5"
+        description: "/etc/myhosts on node1 contains an entry for node3 (proves the loop covers all hosts)"
+        node: node1
+        command: "grep -q 'node3' /etc/myhosts"
+        expect_rc: 0
+
+  # ── Task 4: Use Jinja2 Conditionals in Templates ──
+  - id: "4"
+    title: "Use Jinja2 Conditionals in Templates"
+    points: 1
+    description: |
+      Jinja2 if/elif/else/endif blocks let your template produce different
+      output depending on variables or facts. This is useful for generating
+      configuration files whose content varies by host role.
+
+      The syntax mirrors Python:
+
+        {% if condition %}
+        ... rendered when condition is true ...
+        {% elif other_condition %}
+        ... rendered when other_condition is true ...
+        {% else %}
+        ... rendered when no condition matched ...
+        {% endif %}
+
+      Inside templates you can test group membership using the special Ansible
+      variable inventory_hostname (the host's inventory name) combined with the
+      groups dictionary:
+
+        {% if inventory_hostname in groups['dev'] %}
+
+      This evaluates to true only when the current host is a member of the
+      dev group. Because Ansible renders the template once per host, each host
+      gets the branch appropriate to its own group membership.
+
+      Step 1 — Create /home/vagrant/ansible/templates/server_role.j2:
+
+        Server: {{ ansible_fqdn }}
+        {% if inventory_hostname in groups['dev'] %}
+        Role: Development Server
+        {% elif inventory_hostname in groups['test'] %}
+        Role: Testing Server
+        {% elif inventory_hostname in groups['prod'] %}
+        Role: Production Server
+        {% else %}
+        Role: Unknown
+        {% endif %}
+
+      Step 2 — Create /home/vagrant/ansible/server_role.yml:
+
+        ---
+        - name: Deploy server role file to all hosts
+          hosts: all
+          become: true
+          tasks:
+            - name: Deploy server role file
+              ansible.builtin.template:
+                src: templates/server_role.j2
+                dest: /etc/server_role
+                owner: root
+                group: root
+                mode: '0644'
+
+      Run it with: ansible-playbook /home/vagrant/ansible/server_role.yml
+      Verify:
+        ansible node1 -m command -a "cat /etc/server_role"
+        ansible node3 -m command -a "cat /etc/server_role"
+    checks:
+      - id: "4.1"
+        description: "templates/server_role.j2 template exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/templates/server_role.j2"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "server_role.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/server_role.yml"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "server_role.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check server_role.yml"
+        expect_rc: 0
+
+      - id: "4.4"
+        description: "/etc/server_role on node1 contains 'Development'"
+        node: node1
+        command: "cat /etc/server_role"
+        expect_rc: 0
+        expect_stdout_contains: "Development"
+
+      - id: "4.5"
+        description: "/etc/server_role on node3 contains 'Production'"
+        node: node3
+        command: "cat /etc/server_role"
+        expect_rc: 0
+        expect_stdout_contains: "Production"
+
+  # ── Task 5: Generate Hardware Report with Template ──
+  - id: "5"
+    title: "Generate Hardware Report with Template"
+    points: 1
+    description: |
+      A common Ansible task is generating a hardware report for each managed
+      host using a template. The challenge is handling hardware that may not
+      exist on every host — for example, a second disk (vdb) may be present on
+      some nodes but not others.
+
+      The Jinja2 default filter solves this problem cleanly:
+
+        {{ ansible_devices.vdb.size | default('NONE') }}
+
+      The pipe | passes the value on its left to the filter on its right.
+      If ansible_devices.vdb does not exist (undefined), the default filter
+      substitutes 'NONE' instead of raising an error. This makes the template
+      safe to run on any host regardless of its hardware configuration.
+
+      Common facts used in hardware reports:
+        inventory_hostname        — host name as listed in inventory
+        ansible_memtotal_mb       — total RAM in megabytes
+        ansible_bios_version      — BIOS or firmware version string
+        ansible_devices.vda.size  — size of the primary disk (e.g., "20.00 GB")
+        ansible_devices.vdb.size  — size of the second disk, if present
+
+      Step 1 — Create /home/vagrant/ansible/templates/hwreport.j2:
+
+        HOSTNAME={{ inventory_hostname }}
+        MEMORY={{ ansible_memtotal_mb }}
+        BIOS={{ ansible_bios_version }}
+        DISK_SIZE_VDA={{ ansible_devices.vda.size | default('NONE') }}
+        DISK_SIZE_VDB={{ ansible_devices.vdb.size | default('NONE') }}
+
+      Step 2 — Create /home/vagrant/ansible/hwreport.yml:
+
+        ---
+        - name: Generate hardware report on all hosts
+          hosts: all
+          become: true
+          tasks:
+            - name: Deploy hardware report template
+              ansible.builtin.template:
+                src: templates/hwreport.j2
+                dest: /root/hwreport.txt
+                owner: root
+                group: root
+                mode: '0600'
+
+      Pro Tip: The | default('NONE') filter pattern is particularly useful for
+      hardware report tasks. Always use it for any fact that references optional
+      hardware (second disk, extra NIC, specific BIOS fields). Without it,
+      Ansible errors when the fact is undefined, and you lose the points for all
+      hosts where the hardware is absent.
+
+      Run it with: ansible-playbook /home/vagrant/ansible/hwreport.yml
+      Verify:      ansible all -m command -a "cat /root/hwreport.txt" -b
+    checks:
+      - id: "5.1"
+        description: "templates/hwreport.j2 template exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/templates/hwreport.j2"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "hwreport.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/hwreport.yml"
+        expect_rc: 0
+
+      - id: "5.3"
+        description: "hwreport.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check hwreport.yml"
+        expect_rc: 0
+
+      - id: "5.4"
+        description: "/root/hwreport.txt on node1 contains 'HOSTNAME='"
+        node: node1
+        command: "cat /root/hwreport.txt"
+        expect_rc: 0
+        expect_stdout_contains: "HOSTNAME="
+
+      - id: "5.5"
+        description: "/root/hwreport.txt on node1 contains 'MEMORY='"
+        node: node1
+        command: "cat /root/hwreport.txt"
+        expect_rc: 0
+        expect_stdout_contains: "MEMORY="

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.backends"
+
+[project]
+name = "examiner"
+version = "0.1.0"
+description = "RHCE EX294 Practice Exam TUI"
+requires-python = ">=3.10"
+dependencies = [
+    "textual>=1.0.0",
+    "asyncssh>=2.14.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+examiner = "examiner.__main__:main"

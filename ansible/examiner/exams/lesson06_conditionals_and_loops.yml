@@ -1,0 +1,411 @@
+---
+id: lesson06_conditionals_and_loops
+title: "Lesson 6: Conditionals & Loops"
+duration: 3600
+passing_score: 100
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node5:
+    hostname: node5.lab.local
+    ip: "192.168.56.24"
+    ssh_user: vagrant
+    groups: [workers]
+
+tasks:
+  # ── Task 1: When Conditionals with Facts ──
+  - id: "1"
+    title: "When Conditionals with Facts"
+    points: 1
+    description: |
+      PREREQUISITE: This lesson assumes /home/vagrant/ansible/ansible.cfg and
+      a working inventory file already exist on the control node, created during
+      lessons 01 and 02. All playbooks should be written in /home/vagrant/ansible/.
+
+      The when: directive makes a task conditional. If the condition evaluates
+      to true, the task runs. If false, the task is skipped (you will see
+      "skipping" in the output, which is normal and expected).
+
+      A critical rule: when: conditions are Jinja2 expressions, NOT YAML.
+      You do NOT wrap the condition in {{ }}. Write it as bare Python-like
+      logic:
+
+        when: ansible_distribution == "AlmaLinux"    # CORRECT
+        when: "{{ ansible_distribution == 'AlmaLinux' }}"  # WRONG
+
+      Exam Tip: when: conditions are Jinja2 expressions, NOT YAML — no {{ }}
+      needed. This is one of the most common mistakes on the exam. The double
+      braces are for output interpolation inside strings. Inside when:, you
+      write the expression directly.
+
+      Create the playbook /home/vagrant/ansible/when_facts.yml:
+
+        ---
+        - name: Conditional install with when
+          hosts: lab
+          become: true
+          tasks:
+            - name: Install chrony on AlmaLinux only
+              ansible.builtin.dnf:
+                name: chrony
+                state: present
+              when: ansible_distribution == "AlmaLinux"
+
+      You can combine conditions with 'and' / 'or', or use a YAML list (all
+      items must be true — equivalent to 'and'):
+
+        when:
+          - ansible_distribution == "AlmaLinux"
+          - ansible_memtotal_mb > 512
+
+      Run it with: ansible-playbook when_facts.yml
+      Hosts that do not match will show "skipping" — that is correct behavior.
+    checks:
+      - id: "1.1"
+        description: "when_facts.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/when_facts.yml"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "when_facts.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/when_facts.yml"
+        expect_rc: 0
+
+      - id: "1.3"
+        description: "when_facts.yml contains a when: conditional"
+        node: control
+        command: "grep -q 'when:' /home/vagrant/ansible/when_facts.yml"
+        expect_rc: 0
+
+  # ── Task 2: When Conditionals with Groups ──
+  - id: "2"
+    title: "When Conditionals with Groups"
+    points: 1
+    description: |
+      Conditionals based on inventory groups let a single playbook behave
+      differently on different hosts — without needing separate plays or
+      separate playbooks. This is a key pattern for managing heterogeneous
+      environments.
+
+      Two useful Ansible variables for group-based conditions:
+        - groups['groupname']    — list of hostnames in that group
+        - group_names            — list of groups the CURRENT host belongs to
+
+      Use inventory_hostname to refer to the current host by its inventory name:
+
+        when: inventory_hostname in groups['webservers']
+
+      Or, more idiomatically:
+
+        when: "'webservers' in group_names"
+
+      Create the playbook /home/vagrant/ansible/when_groups.yml that targets
+      all lab hosts but writes different content based on group membership:
+
+        ---
+        - name: Set server role based on inventory group
+          hosts: lab
+          become: true
+          tasks:
+            - name: Write webserver role file
+              ansible.builtin.copy:
+                dest: /etc/server_role
+                content: "webserver\n"
+              when: inventory_hostname in groups['webservers']
+
+            - name: Write dbserver role file
+              ansible.builtin.copy:
+                dest: /etc/server_role
+                content: "dbserver\n"
+              when: inventory_hostname in groups['dbservers']
+
+      node1 and node2 are in webservers, node3 and node4 are in dbservers,
+      node5 is in neither so it will skip both tasks. That is the expected
+      outcome.
+
+      Exam Tip: Use ansible-doc <module> to see all parameters and examples.
+      Run "ansible-doc ansible.builtin.copy" to confirm that content: accepts
+      a string and that dest: is required.
+
+      Run it with: ansible-playbook when_groups.yml
+      Verify: ansible node1 -m command -a "cat /etc/server_role"
+    checks:
+      - id: "2.1"
+        description: "when_groups.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/when_groups.yml"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "when_groups.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/when_groups.yml"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "/etc/server_role on node1 contains 'webserver'"
+        node: node1
+        command: "cat /etc/server_role"
+        expect_rc: 0
+        expect_stdout_contains: "webserver"
+
+      - id: "2.4"
+        description: "/etc/server_role on node3 contains 'dbserver'"
+        node: node3
+        command: "cat /etc/server_role"
+        expect_rc: 0
+        expect_stdout_contains: "dbserver"
+
+  # ── Task 3: Simple Loops ──
+  - id: "3"
+    title: "Simple Loops"
+    points: 1
+    description: |
+      Loops let you repeat a task multiple times with different values, avoiding
+      copy-paste repetition. The modern way to loop in Ansible is with loop:,
+      which takes a YAML list. Each iteration exposes the current item as the
+      special variable {{ item }}.
+
+      Exam Tip: loop replaces with_items in modern Ansible (both work, loop is
+      preferred). You may see with_items in older playbooks and documentation —
+      it still works, but loop is the current standard and what you should write
+      on the exam.
+
+      Create the playbook /home/vagrant/ansible/loop_demo.yml:
+
+        ---
+        - name: Install multiple packages with loop
+          hosts: lab
+          become: true
+          tasks:
+            - name: Install utility packages
+              ansible.builtin.dnf:
+                name: "{{ item }}"
+                state: present
+              loop:
+                - vim-enhanced
+                - tree
+                - wget
+
+      Without loop, you would need three separate tasks. With loop, the dnf
+      module is called once per item. Ansible displays the task output once per
+      iteration and tracks changed/ok/failed counts per iteration.
+
+      Note: For the dnf module specifically, you can also pass a list directly
+      to name: instead of using loop — that is faster because it installs all
+      packages in a single dnf transaction. However, the loop approach is more
+      general and works with any module, which is why it appears on the exam.
+
+      Run it with: ansible-playbook loop_demo.yml
+      Verify: ansible node1 -m command -a "rpm -q tree wget vim-enhanced"
+    checks:
+      - id: "3.1"
+        description: "loop_demo.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/loop_demo.yml"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "loop_demo.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/loop_demo.yml"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "tree is installed on node1"
+        node: node1
+        command: "rpm -q tree"
+        expect_rc: 0
+
+      - id: "3.4"
+        description: "wget is installed on node1"
+        node: node1
+        command: "rpm -q wget"
+        expect_rc: 0
+
+  # ── Task 4: Loops with Dictionaries ──
+  - id: "4"
+    title: "Loops with Dictionaries"
+    points: 1
+    description: |
+      Loops become far more powerful when each item in the list is a dictionary
+      (a map of key-value pairs). This lets you pass multiple related values
+      per iteration, such as a username and its UID together.
+
+      Each dictionary key is accessed as {{ item.keyname }}:
+
+        loop:
+          - { name: alice, uid: 3001 }
+          - { name: bob,   uid: 3002 }
+
+        # Then in the task:
+        ansible.builtin.user:
+          name: "{{ item.name }}"
+          uid:  "{{ item.uid }}"
+
+      Create the playbook /home/vagrant/ansible/loop_users.yml:
+
+        ---
+        - name: Create users with specific UIDs using loop
+          hosts: lab
+          become: true
+          tasks:
+            - name: Create user accounts
+              ansible.builtin.user:
+                name: "{{ item.name }}"
+                uid: "{{ item.uid }}"
+                state: present
+                create_home: true
+              loop:
+                - { name: alice,   uid: 3001 }
+                - { name: bob,     uid: 3002 }
+                - { name: charlie, uid: 3003 }
+
+      The YAML list-of-dicts style is equivalent to the longer YAML list syntax:
+        loop:
+          - name: alice
+            uid: 3001
+
+      Both forms are valid. The inline brace style is more compact and common
+      in exam scenarios where space matters.
+
+      Exam Tip: Use ansible-doc <module> to see all parameters and examples.
+      Run "ansible-doc ansible.builtin.user" to see uid, group, shell, home,
+      password, and all other supported user attributes.
+
+      Run it with: ansible-playbook loop_users.yml
+      Verify: ansible node1 -m command -a "id alice"
+    checks:
+      - id: "4.1"
+        description: "loop_users.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/loop_users.yml"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "loop_users.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/loop_users.yml"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "user alice exists on node1"
+        node: node1
+        command: "id alice"
+        expect_rc: 0
+
+      - id: "4.4"
+        description: "user bob exists on node1"
+        node: node1
+        command: "id bob"
+        expect_rc: 0
+
+      - id: "4.5"
+        description: "user charlie exists on node1"
+        node: node1
+        command: "id charlie"
+        expect_rc: 0
+
+  # ── Task 5: Register with Loops ──
+  - id: "5"
+    title: "Register with Loops"
+    points: 1
+    description: |
+      When you use register: with a loop, Ansible does not give you a single
+      result variable — it gives you a dictionary where .results is a list, one
+      entry per loop iteration. Each entry in .results has all the normal keys
+      (.rc, .stdout, .item, etc.) plus an .item key that tells you which loop
+      value produced that result.
+
+      This lets you process per-item results after the loop finishes:
+
+        - name: Check packages
+          ansible.builtin.command: rpm -q {{ item }}
+          register: pkg_check
+          ignore_errors: true
+          loop:
+            - httpd
+            - mariadb-server
+            - tree
+
+        - name: Show results
+          ansible.builtin.debug:
+            msg: "{{ item.item }}: rc={{ item.rc }}"
+          loop: "{{ pkg_check.results }}"
+
+      Create the playbook /home/vagrant/ansible/loop_register.yml using the
+      pattern above, targeting node1:
+
+        ---
+        - name: Check package installation status
+          hosts: node1
+          tasks:
+            - name: Query each package
+              ansible.builtin.command: "rpm -q {{ item }}"
+              register: pkg_status
+              ignore_errors: true
+              loop:
+                - httpd
+                - mariadb-server
+                - tree
+
+            - name: Report package status
+              ansible.builtin.debug:
+                msg: "Package {{ item.item }} — rc={{ item.rc }} — {{ item.stdout }}"
+              loop: "{{ pkg_status.results }}"
+
+      Note on error handling: this playbook uses ignore_errors to continue even
+      if a package is missing. A more robust pattern uses block/rescue, which
+      lets you define what to do when a task fails — similar to try/catch in
+      programming. You will explore block/rescue in an advanced lesson.
+
+      Exam Tip: Use register + debug to troubleshoot — inspect what a task
+      returns. When working with loop results, use "loop: {{ registered.results }}"
+      and access {{ item.item }} (the loop variable) and {{ item.stdout }} (the
+      output) in your debug message.
+
+      Run it with: ansible-playbook loop_register.yml
+    checks:
+      - id: "5.1"
+        description: "loop_register.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/loop_register.yml"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "loop_register.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/loop_register.yml"
+        expect_rc: 0
+
+      - id: "5.3"
+        description: "loop_register.yml uses the register keyword"
+        node: control
+        command: "grep -q 'register' /home/vagrant/ansible/loop_register.yml"
+        expect_rc: 0

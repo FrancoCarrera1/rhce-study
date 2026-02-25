@@ -1,0 +1,762 @@
+---
+id: exam1
+title: "Practice Exam 1"
+duration: 14400  # 4 hours in seconds
+passing_score: 70
+working_dir: /home/vagrant/exam
+solutions_file: ../solutions/exam1_solutions.md
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [dev]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [test]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [prod, webservers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [prod, webservers]
+  node5:
+    hostname: node5.lab.local
+    ip: "192.168.56.24"
+    ssh_user: vagrant
+    groups: [balancers]
+
+tasks:
+  - id: "1"
+    title: "Install and Configure Ansible"
+    points: 20
+    description: |
+      Install and configure Ansible on the control node as follows:
+
+      * Install the required packages
+      * Create a static inventory file /home/vagrant/exam/inventory with the following:
+        - node1 is a member of the dev host group
+        - node2 is a member of the test host group
+        - node3 and node4 are members of the prod host group
+        - node5 is a member of the balancers host group
+        - The prod host group is a member of the webservers host group
+
+      * Create an Ansible configuration file /home/vagrant/exam/ansible.cfg with the following:
+        - The host inventory file /home/vagrant/exam/inventory is defined
+        - The location of roles used in playbooks is /home/vagrant/exam/roles
+        - The location of collections used in playbooks is /home/vagrant/exam/collections
+        - Privilege escalation is enabled by default
+        - The default remote user is vagrant
+        - Host key checking is disabled
+
+    checks:
+      - id: "1.1"
+        description: "Check ansible.cfg exists"
+        node: control
+        command: "test -f /home/vagrant/exam/ansible.cfg"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "Check inventory file exists"
+        node: control
+        command: "test -f /home/vagrant/exam/inventory"
+        expect_rc: 0
+
+      - id: "1.3"
+        description: "Check inventory setting in ansible.cfg"
+        node: control
+        command: "grep -E '^inventory\\s*=\\s*/home/vagrant/exam/inventory' /home/vagrant/exam/ansible.cfg"
+        expect_rc: 0
+
+      - id: "1.4"
+        description: "Check roles_path setting in ansible.cfg"
+        node: control
+        command: "grep -E '^roles_path\\s*=' /home/vagrant/exam/ansible.cfg | grep -q '/home/vagrant/exam/roles'"
+        expect_rc: 0
+
+      - id: "1.5"
+        description: "Check collections_paths setting in ansible.cfg"
+        node: control
+        command: "grep -E '^collections_paths?\\s*=' /home/vagrant/exam/ansible.cfg | grep -q '/home/vagrant/exam/collections'"
+        expect_rc: 0
+
+      - id: "1.6"
+        description: "Check remote_user setting in ansible.cfg"
+        node: control
+        command: "grep -E '^remote_user\\s*=\\s*vagrant' /home/vagrant/exam/ansible.cfg"
+        expect_rc: 0
+
+      - id: "1.7"
+        description: "Check privilege escalation enabled"
+        node: control
+        command: "grep -E '^become\\s*=\\s*(true|True|yes|Yes)' /home/vagrant/exam/ansible.cfg"
+        expect_rc: 0
+
+      - id: "1.8"
+        description: "Check host_key_checking disabled"
+        node: control
+        command: "grep -E '^host_key_checking\\s*=\\s*(false|False|no|No)' /home/vagrant/exam/ansible.cfg"
+        expect_rc: 0
+
+      - id: "1.9"
+        description: "Check dev group contains node1"
+        node: control
+        command: "cd /home/vagrant/exam && ansible dev --list-hosts | grep -q node1"
+        expect_rc: 0
+
+      - id: "1.10"
+        description: "Check test group contains node2"
+        node: control
+        command: "cd /home/vagrant/exam && ansible test --list-hosts | grep -q node2"
+        expect_rc: 0
+
+      - id: "1.11"
+        description: "Check prod group contains node3 and node4"
+        node: control
+        command: "cd /home/vagrant/exam && ansible prod --list-hosts | grep -q node3 && ansible prod --list-hosts | grep -q node4"
+        expect_rc: 0
+
+      - id: "1.12"
+        description: "Check balancers group contains node5"
+        node: control
+        command: "cd /home/vagrant/exam && ansible balancers --list-hosts | grep -q node5"
+        expect_rc: 0
+
+      - id: "1.13"
+        description: "Check webservers group contains prod children"
+        node: control
+        command: "cd /home/vagrant/exam && ansible webservers --list-hosts | grep -q node3 && ansible webservers --list-hosts | grep -q node4"
+        expect_rc: 0
+
+  - id: "2"
+    title: "Create Ad-Hoc Repository Playbook"
+    points: 15
+    description: |
+      Create a playbook /home/vagrant/exam/repos.yml that runs on all managed nodes and configures
+      the following YUM repositories:
+
+      Repository 1:
+      * Repository ID: baseos
+      * Description: BaseOS Repo
+      * Base URL: https://repo.almalinux.org/almalinux/9/BaseOS/aarch64/os/
+      * GPG check: yes
+      * GPG key: https://repo.almalinux.org/almalinux/RPM-GPG-KEY-AlmaLinux-9
+      * Enabled: yes
+
+      Repository 2:
+      * Repository ID: appstream
+      * Description: AppStream Repo
+      * Base URL: https://repo.almalinux.org/almalinux/9/AppStream/aarch64/os/
+      * GPG check: yes
+      * GPG key: https://repo.almalinux.org/almalinux/RPM-GPG-KEY-AlmaLinux-9
+      * Enabled: yes
+
+    checks:
+      - id: "2.1"
+        description: "Check repos.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/repos.yml"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "Check repos.yml syntax"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook repos.yml --syntax-check"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "Check baseos repo file exists on node1"
+        node: node1
+        command: "test -f /etc/yum.repos.d/baseos.repo"
+        expect_rc: 0
+
+      - id: "2.4"
+        description: "Check appstream repo file exists on node1"
+        node: node1
+        command: "test -f /etc/yum.repos.d/appstream.repo"
+        expect_rc: 0
+
+      - id: "2.5"
+        description: "Check baseos repo file exists on node3"
+        node: node3
+        command: "test -f /etc/yum.repos.d/baseos.repo"
+        expect_rc: 0
+
+  - id: "3"
+    title: "Install Ansible Collections"
+    points: 15
+    description: |
+      Create a directory /home/vagrant/exam/collections and install the following Ansible collections
+      to that directory:
+
+      * ansible.posix
+      * fedora.linux_system_roles
+
+      These collections should be usable from playbooks run in /home/vagrant/exam.
+
+    checks:
+      - id: "3.1"
+        description: "Check collections directory exists"
+        node: control
+        command: "test -d /home/vagrant/exam/collections"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "Check ansible.posix collection installed"
+        node: control
+        command: "test -d /home/vagrant/exam/collections/ansible_collections/ansible/posix"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "Check fedora.linux_system_roles collection installed"
+        node: control
+        command: "test -d /home/vagrant/exam/collections/ansible_collections/fedora/linux_system_roles"
+        expect_rc: 0
+
+  - id: "4"
+    title: "Install Roles from Ansible Galaxy"
+    points: 15
+    description: |
+      Create a directory /home/vagrant/exam/roles for storing roles.
+
+      Create a file /home/vagrant/exam/roles/requirements.yml to install roles from Ansible Galaxy.
+      Install the following roles:
+
+      * geerlingguy.haproxy and name it balancer
+      * geerlingguy.php and name it phpinfo
+
+      The roles should be installed in /home/vagrant/exam/roles directory.
+
+    checks:
+      - id: "4.1"
+        description: "Check roles directory exists"
+        node: control
+        command: "test -d /home/vagrant/exam/roles"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "Check requirements.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/roles/requirements.yml"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "Check balancer role installed"
+        node: control
+        command: "test -d /home/vagrant/exam/roles/balancer"
+        expect_rc: 0
+
+      - id: "4.4"
+        description: "Check phpinfo role installed"
+        node: control
+        command: "test -d /home/vagrant/exam/roles/phpinfo"
+        expect_rc: 0
+
+  - id: "5"
+    title: "Create Apache Role"
+    points: 30
+    description: |
+      Create a role called apache in /home/vagrant/exam/roles with the following requirements:
+
+      * The httpd package is installed and is the latest version
+      * The httpd service is enabled and started
+      * Firewall allows access to the http service
+      * A template file index.html.j2 exists and is used to create /var/www/html/index.html with the content:
+        "Welcome to {{ ansible_fqdn }} on {{ ansible_default_ipv4.address }}"
+
+      The role should be reusable and have a proper directory structure.
+
+    checks:
+      - id: "5.1"
+        description: "Check apache role directory exists"
+        node: control
+        command: "test -d /home/vagrant/exam/roles/apache"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "Check apache role tasks directory exists"
+        node: control
+        command: "test -d /home/vagrant/exam/roles/apache/tasks"
+        expect_rc: 0
+
+      - id: "5.3"
+        description: "Check apache role main tasks file exists"
+        node: control
+        command: "test -f /home/vagrant/exam/roles/apache/tasks/main.yml"
+        expect_rc: 0
+
+      - id: "5.4"
+        description: "Check apache role templates directory exists"
+        node: control
+        command: "test -d /home/vagrant/exam/roles/apache/templates"
+        expect_rc: 0
+
+      - id: "5.5"
+        description: "Check index.html.j2 template exists"
+        node: control
+        command: "test -f /home/vagrant/exam/roles/apache/templates/index.html.j2"
+        expect_rc: 0
+
+  - id: "6"
+    title: "Use Roles Playbook"
+    points: 20
+    description: |
+      Create a playbook /home/vagrant/exam/roles.yml that uses roles as follows:
+
+      * Play 1: On hosts in the webservers group, use the phpinfo role
+      * Play 2: On hosts in the balancers group, use the balancer role
+
+      The playbook should be executable without errors.
+
+    checks:
+      - id: "6.1"
+        description: "Check roles.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/roles.yml"
+        expect_rc: 0
+
+      - id: "6.2"
+        description: "Check roles.yml syntax"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook roles.yml --syntax-check"
+        expect_rc: 0
+
+  - id: "7"
+    title: "Install Packages"
+    points: 20
+    description: |
+      Create a playbook /home/vagrant/exam/packages.yml that:
+
+      * Installs the php and mariadb-server packages on hosts in the dev, test, and prod host groups
+      * Installs the RPM Development Tools package group on hosts in the dev host group
+      * Updates all packages to the latest version on hosts in the dev host group
+
+    checks:
+      - id: "7.1"
+        description: "Check packages.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/packages.yml"
+        expect_rc: 0
+
+      - id: "7.2"
+        description: "Check packages.yml syntax"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook packages.yml --syntax-check"
+        expect_rc: 0
+
+      - id: "7.3"
+        description: "Check php package installed on node1 (dev)"
+        node: node1
+        command: "rpm -q php"
+        expect_rc: 0
+
+      - id: "7.4"
+        description: "Check mariadb-server package installed on node2 (test)"
+        node: node2
+        command: "rpm -q mariadb-server"
+        expect_rc: 0
+
+  - id: "8"
+    title: "Use timesync RHEL System Role"
+    points: 15
+    description: |
+      Create a playbook /home/vagrant/exam/timesync.yml that:
+
+      * Runs on all managed nodes
+      * Uses the timesync role from fedora.linux_system_roles or rhel-system-roles collection
+      * Configures the role to use the NTP server pool.ntp.org
+      * Enables iburst
+
+    checks:
+      - id: "8.1"
+        description: "Check timesync.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/timesync.yml"
+        expect_rc: 0
+
+      - id: "8.2"
+        description: "Check timesync.yml syntax"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook timesync.yml --syntax-check"
+        expect_rc: 0
+
+      - id: "8.3"
+        description: "Check chrony configured on node1"
+        node: node1
+        command: "grep -E 'pool.ntp.org|ntp.org' /etc/chrony.conf"
+        expect_rc: 0
+
+  - id: "9"
+    title: "Web Content Directory"
+    points: 20
+    description: |
+      Create a playbook /home/vagrant/exam/webcontent.yml that runs on hosts in the dev host group
+      and does the following:
+
+      * Creates the directory /webdev with the following requirements:
+        - Ownership: webdev group
+        - Permissions: 2775 (regular files have 664)
+        - SELinux context: httpd_sys_content_t
+      * Creates a symbolic link from /var/www/html/webdev to /webdev
+      * Creates the file /webdev/index.html with a single line of text: Development
+
+      If the webdev group does not exist, the playbook should create it.
+
+    checks:
+      - id: "9.1"
+        description: "Check webcontent.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/webcontent.yml"
+        expect_rc: 0
+
+      - id: "9.2"
+        description: "Check webcontent.yml syntax"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook webcontent.yml --syntax-check"
+        expect_rc: 0
+
+      - id: "9.3"
+        description: "Check /webdev directory exists on node1"
+        node: node1
+        command: "test -d /webdev"
+        expect_rc: 0
+
+      - id: "9.4"
+        description: "Check /webdev permissions on node1"
+        node: node1
+        command: "stat -c '%a' /webdev | grep -q 2775"
+        expect_rc: 0
+
+      - id: "9.5"
+        description: "Check /var/www/html/webdev symlink exists on node1"
+        node: node1
+        command: "test -L /var/www/html/webdev"
+        expect_rc: 0
+
+      - id: "9.6"
+        description: "Check /webdev/index.html content on node1"
+        node: node1
+        command: "grep -q 'Development' /webdev/index.html"
+        expect_rc: 0
+
+  - id: "10"
+    title: "Generate Hardware Report"
+    points: 20
+    description: |
+      Create a playbook /home/vagrant/exam/hwreport.yml that runs on all managed nodes and does
+      the following:
+
+      * Creates the file /root/hwreport.txt with the following content (one item per line in KEY=value format):
+        - HOSTNAME=inventory_hostname
+        - MEMORY=total memory in MB
+        - BIOS=BIOS version
+        - DISK_SIZE_VDA=size of disk device vda
+        - DISK_SIZE_VDB=size of disk device vdb
+
+      * If a hardware item does not exist, the associated value should be set to NONE.
+
+    checks:
+      - id: "10.1"
+        description: "Check hwreport.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/hwreport.yml"
+        expect_rc: 0
+
+      - id: "10.2"
+        description: "Check hwreport.yml syntax"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook hwreport.yml --syntax-check"
+        expect_rc: 0
+
+      - id: "10.3"
+        description: "Check /root/hwreport.txt exists on node1"
+        node: node1
+        command: "sudo test -f /root/hwreport.txt"
+        expect_rc: 0
+
+      - id: "10.4"
+        description: "Check /root/hwreport.txt contains HOSTNAME on node1"
+        node: node1
+        command: "sudo grep -q '^HOSTNAME=' /root/hwreport.txt"
+        expect_rc: 0
+
+      - id: "10.5"
+        description: "Check /root/hwreport.txt contains MEMORY on node1"
+        node: node1
+        command: "sudo grep -q '^MEMORY=' /root/hwreport.txt"
+        expect_rc: 0
+
+  - id: "11"
+    title: "Modify File Content"
+    points: 15
+    description: |
+      Create a playbook /home/vagrant/exam/issue.yml that runs on all managed nodes and modifies
+      the file /etc/issue as follows:
+
+      * On hosts in the dev host group, the content is: Development
+      * On hosts in the test host group, the content is: Test
+      * On hosts in the prod host group, the content is: Production
+
+    checks:
+      - id: "11.1"
+        description: "Check issue.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/issue.yml"
+        expect_rc: 0
+
+      - id: "11.2"
+        description: "Check issue.yml syntax"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook issue.yml --syntax-check"
+        expect_rc: 0
+
+      - id: "11.3"
+        description: "Check /etc/issue content on node1 (dev)"
+        node: node1
+        command: "grep -q 'Development' /etc/issue"
+        expect_rc: 0
+
+      - id: "11.4"
+        description: "Check /etc/issue content on node2 (test)"
+        node: node2
+        command: "grep -q 'Test' /etc/issue"
+        expect_rc: 0
+
+      - id: "11.5"
+        description: "Check /etc/issue content on node3 (prod)"
+        node: node3
+        command: "grep -q 'Production' /etc/issue"
+        expect_rc: 0
+
+  - id: "12"
+    title: "Generate Hosts File"
+    points: 20
+    description: |
+      Create a Jinja2 template /home/vagrant/exam/hosts.j2 that generates a file with the following content:
+
+      * A header with two lines:
+        127.0.0.1   localhost localhost.localdomain
+        ::1         localhost localhost.localdomain
+      * A line for each managed host in the inventory with the format:
+        <IP_address> <FQDN> <short_hostname>
+
+      Create a playbook /home/vagrant/exam/hosts.yml that uses the template to generate the file
+      /etc/myhosts on hosts in the dev host group.
+
+    checks:
+      - id: "12.1"
+        description: "Check hosts.j2 template exists"
+        node: control
+        command: "test -f /home/vagrant/exam/hosts.j2"
+        expect_rc: 0
+
+      - id: "12.2"
+        description: "Check hosts.yml playbook exists"
+        node: control
+        command: "test -f /home/vagrant/exam/hosts.yml"
+        expect_rc: 0
+
+      - id: "12.3"
+        description: "Check hosts.yml syntax"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook hosts.yml --syntax-check"
+        expect_rc: 0
+
+      - id: "12.4"
+        description: "Check /etc/myhosts exists on node1"
+        node: node1
+        command: "test -f /etc/myhosts"
+        expect_rc: 0
+
+      - id: "12.5"
+        description: "Check /etc/myhosts contains node3 on node1"
+        node: node1
+        command: "grep -q 'node3' /etc/myhosts"
+        expect_rc: 0
+
+  - id: "13"
+    title: "Create Password Vault"
+    points: 15
+    description: |
+      Create an Ansible vault file /home/vagrant/exam/credentials.yml to store user passwords:
+
+      * Use the password sunshine42day to encrypt the vault
+      * The vault should define two variables:
+        - dev_pw: devSec#42
+        - mgr_pw: mgrSec#42
+      * Store the vault password in /home/vagrant/exam/vault_key
+
+    checks:
+      - id: "13.1"
+        description: "Check credentials.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/credentials.yml"
+        expect_rc: 0
+
+      - id: "13.2"
+        description: "Check vault_key exists"
+        node: control
+        command: "test -f /home/vagrant/exam/vault_key"
+        expect_rc: 0
+
+      - id: "13.3"
+        description: "Check credentials.yml is encrypted"
+        node: control
+        command: "head -1 /home/vagrant/exam/credentials.yml | grep -q 'ANSIBLE_VAULT'"
+        expect_rc: 0
+
+      - id: "13.4"
+        description: "Check vault_key contains vault password"
+        node: control
+        command: "grep -q 'sunshine42day' /home/vagrant/exam/vault_key"
+        expect_rc: 0
+
+  - id: "14"
+    title: "Create User Accounts"
+    points: 20
+    description: |
+      Create a variable file with a list of users. You may create this file manually or download it.
+      The file should define users with their job titles.
+
+      Create a playbook /home/vagrant/exam/users.yml that:
+
+      * Uses the vault password file /home/vagrant/exam/vault_key
+      * Creates user accounts from the user list with the following conditions:
+        - Users with job=developer are created on hosts in the dev and test host groups
+          * Assigned to the supplementary group appdev
+          * Password from the dev_pw variable
+        - Users with job=manager are created on hosts in the prod host group
+          * Assigned to the supplementary group appmgr
+          * Password from the mgr_pw variable
+      * Passwords should be in SHA512 format
+      * If the groups appdev or appmgr do not exist, they should be created
+
+    checks:
+      - id: "14.1"
+        description: "Check users.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/users.yml"
+        expect_rc: 0
+
+      - id: "14.2"
+        description: "Check users.yml syntax"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook users.yml --syntax-check"
+        expect_rc: 0
+
+      - id: "14.3"
+        description: "Check appdev group exists on node1"
+        node: node1
+        command: "getent group appdev"
+        expect_rc: 0
+
+      - id: "14.4"
+        description: "Check appmgr group exists on node3"
+        node: node3
+        command: "getent group appmgr"
+        expect_rc: 0
+
+  - id: "15"
+    title: "Rekey Ansible Vault"
+    points: 10
+    description: |
+      An existing Ansible vault file /home/vagrant/exam/payments.yml is encrypted with the password
+      oldpass2024.
+
+      Rekey this vault file so it is encrypted with the new password newpass2024.
+
+      The file should remain encrypted and usable with the new password.
+
+    checks:
+      - id: "15.1"
+        description: "Check payments.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/payments.yml"
+        expect_rc: 0
+
+      - id: "15.2"
+        description: "Check payments.yml is still encrypted"
+        node: control
+        command: "head -1 /home/vagrant/exam/payments.yml | grep -q 'ANSIBLE_VAULT'"
+        expect_rc: 0
+
+  - id: "16"
+    title: "Configure Cron Job"
+    points: 10
+    description: |
+      Create a playbook /home/vagrant/exam/cron.yml that runs on all managed nodes and configures
+      a cron job that:
+
+      * Runs every 2 minutes
+      * Executes the command: logger "Ansible health check"
+      * Runs as the vagrant user
+
+    checks:
+      - id: "16.1"
+        description: "Check cron.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/cron.yml"
+        expect_rc: 0
+
+      - id: "16.2"
+        description: "Check cron.yml syntax"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook cron.yml --syntax-check"
+        expect_rc: 0
+
+      - id: "16.3"
+        description: "Check cron job configured on node1"
+        node: node1
+        command: "crontab -l | grep -q 'logger.*health'"
+        expect_rc: 0
+
+  - id: "17"
+    title: "Create Logical Volume"
+    points: 20
+    description: |
+      Create a playbook /home/vagrant/exam/lvm.yml that runs on all managed nodes and does the following:
+
+      * Creates a logical volume named app_lv with the following requirements:
+        - The logical volume is created in the volume group storage_vg
+        - The logical volume size is 1500 MiB
+        - The logical volume is formatted with the ext4 filesystem
+
+      * If the requested logical volume size cannot be created, display the message:
+        "Could not create logical volume of that size"
+        and create a logical volume of size 800 MiB instead
+
+      * If the volume group storage_vg does not exist, display the message:
+        "Volume group does not exist"
+
+      * Do not mount the logical volume in any way
+
+    checks:
+      - id: "17.1"
+        description: "Check lvm.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/lvm.yml"
+        expect_rc: 0
+
+      - id: "17.2"
+        description: "Check lvm.yml syntax"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook lvm.yml --syntax-check"
+        expect_rc: 0
+
+      - id: "17.3"
+        description: "Check playbook contains error handling logic"
+        node: control
+        command: "grep -E '(block:|rescue:|when:)' /home/vagrant/exam/lvm.yml"
+        expect_rc: 0

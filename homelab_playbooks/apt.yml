@@ -1,0 +1,8 @@
+- name: Update and Upgrade apt packages
+  hosts: DNS
+  become: true
+  tasks:
+  - name: Update apt package AND Upgrade
+    apt: 
+      update_cache: yes
+      upgrade: true

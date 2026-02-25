@@ -1,0 +1,519 @@
+---
+id: lesson17_lvm_storage
+title: "Lesson 17: LVM Storage & Error Handling"
+duration: 3600
+passing_score: 100
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [dev]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [test]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [prod, webservers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [prod, webservers]
+
+tasks:
+  # ── Task 1: Understand Block/Rescue in Ansible ──
+  - id: "1"
+    title: "Create a Playbook with Block/Rescue"
+    points: 1
+    description: |
+      Before tackling LVM, learn the block/rescue pattern. This is Ansible's
+      try/catch equivalent and it appears frequently in production playbooks.
+
+      Create /home/vagrant/ansible/block_demo.yml that runs on the dev group:
+
+        ---
+        - name: Demonstrate block/rescue
+          hosts: dev
+          tasks:
+            - block:
+                - name: This task will fail
+                  ansible.builtin.command: /bin/false
+                - name: This will not run
+                  ansible.builtin.debug:
+                    msg: "This is skipped because the block failed"
+              rescue:
+                - name: This runs because the block failed
+                  ansible.builtin.debug:
+                    msg: "Caught an error! Handling it gracefully."
+              always:
+                - name: This always runs
+                  ansible.builtin.debug:
+                    msg: "Cleanup or final steps go here."
+
+      Key concepts:
+        block:   — the "try" section. Tasks run normally until one fails.
+                   When a task in block fails, Ansible immediately skips the
+                   remaining block tasks and jumps to rescue.
+        rescue:  — the "catch" section. Only runs if a task in block fails.
+                   Use this to handle the error: print a message, try a
+                   fallback, clean up a partial change.
+        always:  — the "finally" section. Always runs regardless of whether
+                   block succeeded or rescue ran. Use this for cleanup steps
+                   that must happen no matter what.
+
+      Run the playbook and observe the output:
+        cd /home/vagrant/ansible
+        ansible-playbook block_demo.yml
+
+      What you will see:
+        - The "This task will fail" task reports FAILED
+        - The "This will not run" task is skipped
+        - The rescue debug task prints "Caught an error! Handling it gracefully."
+        - The always debug task prints "Cleanup or final steps go here."
+        - The play recap shows 0 failures — because rescue handled the error.
+          This is a key detail: a handled rescue does NOT count as a failed play.
+
+      Pro Tip: The block/rescue pattern is how you handle LVM sizing failures.
+      Write block/rescue instead of ignore_errors whenever you need to try one
+      approach and fall back to another. The pattern also keeps play recap clean
+      (no red FAILED lines) which matters for grading.
+    checks:
+      - id: "1.1"
+        description: "block_demo.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/block_demo.yml"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "block_demo.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check block_demo.yml"
+        expect_rc: 0
+
+      - id: "1.3"
+        description: "block_demo.yml contains 'block' keyword"
+        node: control
+        command: "grep -q 'block:' /home/vagrant/ansible/block_demo.yml"
+        expect_rc: 0
+
+      - id: "1.4"
+        description: "block_demo.yml contains 'rescue' keyword"
+        node: control
+        command: "grep -q 'rescue:' /home/vagrant/ansible/block_demo.yml"
+        expect_rc: 0
+
+  # ── Task 2: Check for Volume Groups with Ansible Facts ──
+  - id: "2"
+    title: "Use Ansible Facts to Detect Volume Groups"
+    points: 1
+    description: |
+      Ansible gathers LVM information automatically during fact collection.
+      The gathered data lives in the ansible_lvm variable, which has this shape:
+
+        ansible_lvm:
+          vgs:
+            storage_vg:         # volume group name as key
+              free_g: "10.00"
+              num_lvs: "1"
+              num_pvs: "1"
+              size_g: "10.00"
+          lvs:
+            app_lv:             # logical volume name as key
+              size_g: "1.50"
+              vg: storage_vg
+          pvs:
+            /dev/vdb:           # physical volume as key
+              free_g: "8.50"
+              size_g: "10.00"
+              vg: storage_vg
+
+      To check if a specific volume group exists, use the Jinja2 'is defined'
+      test against ansible_lvm.vgs.<vgname>. If the VG does not exist, the
+      key will be absent and 'is defined' returns false.
+
+      Create /home/vagrant/ansible/vg_check.yml that runs on all hosts:
+
+        ---
+        - name: Check for volume groups
+          hosts: all
+          tasks:
+            - name: Show VG info when storage_vg VG exists
+              ansible.builtin.debug:
+                msg: "Found storage_vg on {{ inventory_hostname }}"
+              when: ansible_lvm.vgs.storage_vg is defined
+
+            - name: Show message when storage_vg VG does not exist
+              ansible.builtin.debug:
+                msg: "Volume group does not exist"
+              when: ansible_lvm.vgs.storage_vg is undefined
+
+      Run it:
+        cd /home/vagrant/ansible
+        ansible-playbook vg_check.yml
+
+      In our lab the storage_vg VG likely does not exist on any node — all hosts
+      will print "Volume group does not exist". That is expected and correct.
+      The goal here is to practice the conditional syntax that LVM playbooks
+      require.
+
+      Key takeaway:
+        ansible_lvm.vgs.<vgname> is defined   — VG exists, proceed with LVM tasks
+        ansible_lvm.vgs.<vgname> is undefined  — VG absent, skip or show message
+
+      Pro Tip: Always guard LVM tasks with this VG existence check. The grader
+      runs your playbook against multiple hosts. If even one host lacks the VG
+      and your playbook has no guard, that host will fail the LVM module task
+      and your play recap will show errors — which costs points.
+    checks:
+      - id: "2.1"
+        description: "vg_check.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/vg_check.yml"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "vg_check.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check vg_check.yml"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "vg_check.yml checks for VG using ansible_lvm fact"
+        node: control
+        command: "grep -q 'ansible_lvm' /home/vagrant/ansible/vg_check.yml"
+        expect_rc: 0
+
+  # ── Task 3: Create LVM Playbook with Block/Rescue ──
+  - id: "3"
+    title: "Create LVM Playbook with Block/Rescue"
+    points: 1
+    description: |
+      This is the core LVM pattern. A typical LVM task reads:
+        "Create a logical volume named app_lv in the storage_vg volume group.
+         Size it at 1500 MiB. If that size is not available, use 800 MiB.
+         Format it with ext4. Do not mount it."
+
+      The correct solution combines the VG existence check from Task 2 with
+      the block/rescue pattern from Task 1.
+
+      Create /home/vagrant/ansible/lvm.yml that runs on all hosts:
+
+        ---
+        - name: Create and use logical volumes
+          hosts: all
+          tasks:
+            - block:
+                - name: Create logical volume app_lv (1500 MiB)
+                  community.general.lvol:
+                    vg: storage_vg
+                    lv: app_lv
+                    size: 1500
+
+                - name: Format with ext4
+                  community.general.filesystem:
+                    fstype: ext4
+                    dev: /dev/storage_vg/app_lv
+
+              rescue:
+                - name: Display error message
+                  ansible.builtin.debug:
+                    msg: "Could not create logical volume of that size"
+
+                - name: Try smaller size (800 MiB)
+                  community.general.lvol:
+                    vg: storage_vg
+                    lv: app_lv
+                    size: 800
+                  when: ansible_lvm.vgs.storage_vg is defined
+
+                - name: Format smaller LV with ext4
+                  community.general.filesystem:
+                    fstype: ext4
+                    dev: /dev/storage_vg/app_lv
+                  when: ansible_lvm.vgs.storage_vg is defined
+
+              when: ansible_lvm.vgs.storage_vg is defined
+
+            - name: VG does not exist
+              ansible.builtin.debug:
+                msg: "Volume group does not exist"
+              when: ansible_lvm.vgs.storage_vg is undefined
+
+      Key patterns — memorise these five rules:
+
+        1. The outer 'when:' on the block checks if the VG exists at all.
+           Without this guard, hosts without the VG will fail at lvol.
+
+        2. The block tries the full 1500 MiB first. If the VG exists but
+           has less than 1500 MiB free, lvol fails and rescue catches it.
+
+        3. Rescue prints a message then tries 800 MiB. The rescue tasks
+           also include the VG check (it could theoretically have been
+           removed between the block and rescue — defensive coding).
+
+        4. The separate debug task below the block handles the third case:
+           VG simply does not exist on this host. It is a standalone task,
+           not inside block or rescue.
+
+        5. Do NOT mount the LV unless the task explicitly asks for it.
+           Adding a mount task when not asked costs you marks.
+
+      Syntax check the playbook:
+        cd /home/vagrant/ansible
+        ansible-playbook --syntax-check lvm.yml
+
+      In our lab, the storage_vg VG does not exist on any node, so running the
+      playbook will only print "Volume group does not exist" for each host.
+      That is correct behavior. A real environment would provide the actual VG.
+    checks:
+      - id: "3.1"
+        description: "lvm.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/lvm.yml"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "lvm.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check lvm.yml"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "lvm.yml contains 'block' keyword"
+        node: control
+        command: "grep -q 'block:' /home/vagrant/ansible/lvm.yml"
+        expect_rc: 0
+
+      - id: "3.4"
+        description: "lvm.yml contains 'rescue' keyword"
+        node: control
+        command: "grep -q 'rescue:' /home/vagrant/ansible/lvm.yml"
+        expect_rc: 0
+
+      - id: "3.5"
+        description: "lvm.yml uses the lvol module"
+        node: control
+        command: "grep -q 'lvol' /home/vagrant/ansible/lvm.yml"
+        expect_rc: 0
+
+      - id: "3.6"
+        description: "lvm.yml checks for VG existence using ansible_lvm"
+        node: control
+        command: "grep -q 'ansible_lvm' /home/vagrant/ansible/lvm.yml"
+        expect_rc: 0
+
+  # ── Task 4: Create Partition Playbook (Bonus Pattern) ──
+  - id: "4"
+    title: "Create Partition Playbook with Error Handling"
+    points: 1
+    description: |
+      Some exercises include a partition question instead of (or in addition
+      to) the LVM question. The pattern is structurally identical to the LVM
+      playbook but uses different modules and checks for a disk device instead
+      of a volume group.
+
+      Device existence check:
+        ansible_facts.devices.vdb is defined   — /dev/vdb exists
+        ansible_facts.devices.vdb is undefined — /dev/vdb absent
+
+      Modules used:
+        community.general.parted    — Create and manage partition tables and partitions
+        community.general.filesystem — Format the partition
+        ansible.posix.mount         — Mount and manage /etc/fstab entries
+
+      Create /home/vagrant/ansible/partition.yml that runs on all hosts:
+
+        ---
+        - name: Create partitions
+          hosts: all
+          tasks:
+            - block:
+                - name: Create partition (1500M)
+                  community.general.parted:
+                    device: /dev/vdb
+                    number: 1
+                    state: present
+                    part_end: 1500MiB
+
+                - name: Format partition
+                  community.general.filesystem:
+                    fstype: ext4
+                    dev: /dev/vdb1
+
+                - name: Mount partition
+                  ansible.posix.mount:
+                    path: /newpart
+                    src: /dev/vdb1
+                    fstype: ext4
+                    state: mounted
+
+              rescue:
+                - name: Size error
+                  ansible.builtin.debug:
+                    msg: "Could not create partition of that size"
+
+                - name: Create smaller partition (800M)
+                  community.general.parted:
+                    device: /dev/vdb
+                    number: 1
+                    state: present
+                    part_end: 800MiB
+                  when: ansible_facts.devices.vdb is defined
+
+              when: ansible_facts.devices.vdb is defined
+
+            - name: Disk not found
+              ansible.builtin.debug:
+                msg: "Disk does not exist"
+              when: ansible_facts.devices.vdb is undefined
+
+      Differences from the LVM playbook worth noting:
+
+        - The existence check uses ansible_facts.devices.vdb instead of
+          ansible_lvm.vgs.storage_vg. Use the correct fact for what you are
+          checking (device for partitions, vgs for LVM).
+
+        - parted uses part_end (not size) to specify partition boundaries.
+          part_end: 1500MiB means the partition ends at the 1500 MiB mark
+          from the start of the disk, effectively making it 1500 MiB.
+
+        - The partition playbook DOES include a mount task. Read the task
+          carefully — partition tasks typically ask you to mount, while
+          LVM tasks typically say not to.
+
+        - /dev/vdb1 is the first partition on /dev/vdb. If the task uses a
+          different device name (sdb, nvme0n1), adjust accordingly.
+
+      Syntax check the playbook:
+        cd /home/vagrant/ansible
+        ansible-playbook --syntax-check partition.yml
+
+      In our lab, VMs do not have /dev/vdb, so the playbook will display
+      "Disk does not exist" for each host. That is the expected outcome.
+    checks:
+      - id: "4.1"
+        description: "partition.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/partition.yml"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "partition.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check partition.yml"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "partition.yml contains 'block' keyword"
+        node: control
+        command: "grep -q 'block:' /home/vagrant/ansible/partition.yml"
+        expect_rc: 0
+
+      - id: "4.4"
+        description: "partition.yml checks for device using ansible_facts.devices"
+        node: control
+        command: "grep -q 'ansible_facts.devices' /home/vagrant/ansible/partition.yml"
+        expect_rc: 0
+
+  # ── Task 5: LVM with Multiple Conditions ──
+  - id: "5"
+    title: "LVM with Multiple Conditions"
+    points: 1
+    description: |
+      The final task combines Jinja2 templating with LVM facts to generate a
+      per-host storage report. This exercises the same ansible_lvm facts used
+      in Tasks 2 and 3, but with iteration instead of simple existence checks.
+
+      Create /home/vagrant/ansible/storage_report.yml that runs on all hosts
+      and writes /tmp/storage_report.txt on each managed node:
+
+        ---
+        - name: Storage report
+          hosts: all
+          tasks:
+            - name: Gather storage info
+              ansible.builtin.copy:
+                content: |
+                  Storage Report for {{ inventory_hostname }}
+                  =============================================
+                  Total Memory: {{ ansible_memtotal_mb }} MB
+                  {% if ansible_lvm.vgs | length > 0 %}
+                  Volume Groups Found:
+                  {% for vg_name, vg_info in ansible_lvm.vgs.items() %}
+                    - {{ vg_name }}: {{ vg_info.size_g }}g
+                  {% endfor %}
+                  {% else %}
+                  No Volume Groups Found
+                  {% endif %}
+                dest: /tmp/storage_report.txt
+
+      How the Jinja2 logic works:
+
+        ansible_lvm.vgs | length > 0
+          — The 'length' filter returns the count of keys in the vgs dictionary.
+            If it is greater than 0, at least one VG exists on this host.
+
+        ansible_lvm.vgs.items()
+          — Produces a list of (key, value) pairs from the vgs dictionary.
+            Each iteration gives you vg_name (the VG name string) and vg_info
+            (the dict with free_g, size_g, num_lvs, etc.).
+
+        vg_info.size_g
+          — The total size of the volume group in gigabytes as a string.
+
+      Run the playbook:
+        cd /home/vagrant/ansible
+        ansible-playbook storage_report.yml
+
+      Check the report on node1:
+        ansible node1 -m command -a "cat /tmp/storage_report.txt"
+
+      Expected output on a node with no VGs:
+        Storage Report for node1.lab.local
+        =============================================
+        Total Memory: 512 MB
+        No Volume Groups Found
+
+      Expected output on a node with a storage_vg of 10 GiB:
+        Storage Report for node1.lab.local
+        =============================================
+        Total Memory: 512 MB
+        Volume Groups Found:
+          - storage_vg: 10.00g
+
+      Pro Tip: The ansible.builtin.copy module with the content: parameter
+      is a quick way to write templated text to a file without needing a
+      separate Jinja2 template file. The content value is processed as a
+      Jinja2 template, so all {{ }} variables and {% %} control structures
+      work exactly as they would in a .j2 file. Use this pattern whenever a
+      task asks you to create a report or write dynamic content to a file and
+      the content is short enough to inline.
+    checks:
+      - id: "5.1"
+        description: "storage_report.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/storage_report.yml"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "storage_report.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check storage_report.yml"
+        expect_rc: 0
+
+      - id: "5.3"
+        description: "/tmp/storage_report.txt exists on node1 after running the playbook"
+        node: node1
+        command: "test -f /tmp/storage_report.txt"
+        expect_rc: 0

@@ -1,0 +1,558 @@
+---
+id: lesson13_advanced_vault
+title: "Lesson 13: Advanced Vault & Role Dependencies"
+duration: 3600
+passing_score: 100
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node5:
+    hostname: node5.lab.local
+    ip: "192.168.56.24"
+    ssh_user: vagrant
+    groups: [workers]
+
+tasks:
+  # ── Task 1: Encrypt a String with Vault ──
+  - id: "1"
+    title: "Encrypt a String with Vault"
+    points: 1
+    description: |
+      Lesson 10 covered encrypting entire files with ansible-vault. But sometimes
+      you only need to protect ONE sensitive value inside an otherwise plain YAML
+      file — an API key, a single password, a token. Encrypting the whole file for
+      that one secret is overkill. That is what ansible-vault encrypt_string is for.
+
+      ansible-vault encrypt_string produces an inline vault blob that you paste
+      directly into a playbook or variable file. The surrounding file stays human-
+      readable; only the secret is encrypted.
+
+      The command syntax:
+        ansible-vault encrypt_string \
+          --vault-password-file <pass_file> \
+          --name '<variable_name>' \
+          '<plaintext_value>'
+
+      The output looks like:
+
+        api_key: !vault |
+                  $ANSIBLE_VAULT;1.1;AES256
+                  6435363635363831633...
+                  ...
+
+      That entire block (including !vault |) is pasted into your playbook's vars:
+      section or a vars file. Ansible recognises the !vault tag and decrypts the
+      value automatically at runtime using the vault password.
+
+      When to use encrypt_string vs encrypt:
+        - encrypt_string: one or a few variables in an otherwise plain file.
+          Good for playbooks shared with teammates who need to see the structure.
+        - encrypt: entire file has secrets. Good for credentials files that are
+          never meant to be human-readable.
+
+      Pro Tip: You may be asked to use either approach. Read the task carefully —
+      if it says "encrypt the variable" or "inline vault", use encrypt_string.
+      If it says "encrypt the file", use ansible-vault encrypt.
+
+      ─────────────────────────────────────────────────────────────────────
+      THE TASK
+      ─────────────────────────────────────────────────────────────────────
+
+      Step 1 — Create a dedicated vault password file for this lesson:
+        echo 'lesson13' > /home/vagrant/ansible/vault_pass13.txt
+        chmod 600 /home/vagrant/ansible/vault_pass13.txt
+
+      Step 2 — Encrypt the string value 'MySecretAPI123' with variable name
+      'api_key' and capture the output:
+        cd /home/vagrant/ansible
+        ansible-vault encrypt_string \
+          --vault-password-file vault_pass13.txt \
+          --name 'api_key' \
+          'MySecretAPI123'
+
+      Copy the entire output block (from api_key: through the last hex line).
+
+      Step 3 — Create /home/vagrant/ansible/inline_vault.yml. Paste the
+      encrypted block under vars: and add a task to write it to node1:
+
+        ---
+        - name: Deploy API config using inline vault variable
+          hosts: node1.lab.local
+          vars:
+            api_key: !vault |
+                      $ANSIBLE_VAULT;1.1;AES256
+                      <paste your encrypted block here>
+          tasks:
+            - name: Write API config file with decrypted key
+              ansible.builtin.copy:
+                content: "api_key={{ api_key }}\n"
+                dest: /tmp/api-config.txt
+                mode: '0600'
+
+      Step 4 — Run the playbook using the vault password file:
+        cd /home/vagrant/ansible
+        ansible-playbook inline_vault.yml \
+          --vault-password-file vault_pass13.txt
+
+      Step 5 — Verify the decrypted value was written:
+        ansible node1.lab.local -m command \
+          -a "cat /tmp/api-config.txt"
+
+      The output should show: api_key=MySecretAPI123
+
+      The !vault YAML tag tells Ansible's variable loader that this string is
+      vault-encrypted. No special module or flag is needed in the task itself —
+      Ansible handles the decryption transparently before the variable is used.
+
+      Tip: When pasting encrypt_string output into a playbook, indentation
+      matters. The encrypted block must be indented consistently under the
+      variable name. If you see a YAML parse error, check your indentation.
+    checks:
+      - id: "1.1"
+        description: "vault_pass13.txt exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/vault_pass13.txt"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "inline_vault.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/inline_vault.yml"
+        expect_rc: 0
+
+      - id: "1.3"
+        description: "inline_vault.yml contains the !vault inline tag"
+        node: control
+        command: "grep -q '!vault' /home/vagrant/ansible/inline_vault.yml"
+        expect_rc: 0
+
+      - id: "1.4"
+        description: "/tmp/api-config.txt exists on node1"
+        node: node1
+        command: "test -f /tmp/api-config.txt"
+        expect_rc: 0
+
+      - id: "1.5"
+        description: "/tmp/api-config.txt contains the decrypted value on node1"
+        node: node1
+        command: "grep -q 'MySecretAPI123' /tmp/api-config.txt"
+        expect_rc: 0
+
+  # ── Task 2: Encrypt an Existing Variable File ──
+  - id: "2"
+    title: "Encrypt an Existing Variable File"
+    points: 1
+    description: |
+      ansible-vault encrypt takes a PLAIN file you have already written and
+      encrypts it in-place. The original content is replaced with the vault
+      blob. This is the workflow when you realise a file you wrote in plaintext
+      contains secrets that should be protected.
+
+      Compare the two authoring workflows:
+
+        Workflow A (create encrypted from the start):
+          ansible-vault create app_secrets.yml
+          # Opens editor — write YAML, save, file is immediately encrypted
+
+        Workflow B (write plain first, then encrypt):
+          vim app_secrets.yml      # write YAML normally
+          ansible-vault encrypt app_secrets.yml --vault-password-file <file>
+          # File is now encrypted in-place
+
+      Workflow B is useful when you are writing or reviewing content before
+      locking it down, or when a CI pipeline needs to encrypt a file that was
+      generated by a script.
+
+      ansible-vault decrypt reverses the operation:
+        ansible-vault decrypt app_secrets.yml --vault-password-file <file>
+
+      Use decrypt carefully — the file is written back as plaintext. Never
+      commit the decrypted version to version control.
+
+      ─────────────────────────────────────────────────────────────────────
+      THE TASK
+      ─────────────────────────────────────────────────────────────────────
+
+      Step 1 — Write the plain variable file:
+        cat > /home/vagrant/ansible/app_secrets.yml << 'EOF'
+        ---
+        db_host: "node3.lab.local"
+        db_password: "SecureDB456"
+        EOF
+
+      Step 2 — Encrypt it using vault_pass13.txt:
+        cd /home/vagrant/ansible
+        ansible-vault encrypt app_secrets.yml \
+          --vault-password-file vault_pass13.txt
+
+      Step 3 — Verify the first line shows the vault header:
+        head -1 app_secrets.yml
+        # Expected: $ANSIBLE_VAULT;1.1;AES256
+
+      Step 4 — View the decrypted content without changing the file:
+        ansible-vault view app_secrets.yml \
+          --vault-password-file vault_pass13.txt
+        # Should show the original YAML with db_host and db_password
+
+      To edit the encrypted file later (modifying values without decrypting
+      it to disk permanently):
+        ansible-vault edit app_secrets.yml \
+          --vault-password-file vault_pass13.txt
+
+      Tip: ansible-vault encrypt vs encrypt_string: if the exam says
+      "create a vault-encrypted variables file", use ansible-vault create or
+      write then encrypt. If it says "encrypt the string", use encrypt_string.
+      The distinction matters for scoring.
+    checks:
+      - id: "2.1"
+        description: "app_secrets.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/app_secrets.yml"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "app_secrets.yml is vault-encrypted (has ANSIBLE_VAULT header)"
+        node: control
+        command: "head -1 /home/vagrant/ansible/app_secrets.yml"
+        expect_stdout_contains: "$ANSIBLE_VAULT"
+
+  # ── Task 3: Use Mixed Vault and Plain Variables ──
+  - id: "3"
+    title: "Use Mixed Vault and Plain Variables"
+    points: 1
+    description: |
+      Real-world projects typically have some variables that are sensitive
+      (passwords, keys) and some that are not (port numbers, package names).
+      Ansible lets you load multiple vars_files in a single play — mixing
+      vault-encrypted and plain files freely.
+
+      This is a clean architecture pattern:
+        - Keep secrets in an encrypted file (e.g. app_secrets.yml)
+        - Keep configuration in a plain file (e.g. app_config.yml)
+        - The playbook vars_files: list loads both
+
+      Ansible processes the list in order. If two files define the same
+      variable, the LAST one wins. Plan your file order accordingly.
+
+      The vars_files: list:
+        vars_files:
+          - app_config.yml      # plain — anyone can read this
+          - app_secrets.yml     # encrypted — vault password required
+
+      When you run the playbook, Ansible detects the $ANSIBLE_VAULT header
+      in app_secrets.yml and decrypts it automatically. You supply the
+      password via --vault-password-file or via vault_password_file in
+      ansible.cfg.
+
+      Tip: Store vault password in a file and set vault_password_file in
+      ansible.cfg — on the exam this means you never need to type
+      --vault-password-file on any command.
+
+      ─────────────────────────────────────────────────────────────────────
+      THE TASK
+      ─────────────────────────────────────────────────────────────────────
+
+      Step 1 — Create the plain config file:
+        cat > /home/vagrant/ansible/app_config.yml << 'EOF'
+        ---
+        app_name: "MyApp"
+        app_port: 8080
+        EOF
+
+      Step 2 — Ensure app_secrets.yml from Task 2 still exists and is
+      encrypted (it should be — do not decrypt it).
+
+      Step 3 — Create /home/vagrant/ansible/mixed_vars.yml:
+
+        ---
+        - name: Deploy application config using mixed vault and plain vars
+          hosts: node3.lab.local
+          vars_files:
+            - app_config.yml
+            - app_secrets.yml
+          tasks:
+            - name: Deploy application config file
+              ansible.builtin.copy:
+                content: |
+                  [app]
+                  name={{ app_name }}
+                  port={{ app_port }}
+
+                  [database]
+                  host={{ db_host }}
+                  password={{ db_password }}
+                dest: /opt/app.conf
+                owner: root
+                group: root
+                mode: '0640'
+
+      Step 4 — Run the playbook with the vault password file:
+        cd /home/vagrant/ansible
+        ansible-playbook mixed_vars.yml \
+          --vault-password-file vault_pass13.txt
+
+      Step 5 — Verify:
+        ansible node3.lab.local -m command \
+          -a "sudo cat /opt/app.conf" -b
+        # Should show all four values, including password=SecureDB456
+
+      The mode '0640' means owner has read/write, group has read, others have
+      none. For config files containing passwords this is the minimum safe
+      permission. Use '0600' (owner read/write only) when possible.
+    checks:
+      - id: "3.1"
+        description: "app_config.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/app_config.yml"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "mixed_vars.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/mixed_vars.yml"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "mixed_vars.yml passes syntax check with vault password"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check mixed_vars.yml --vault-password-file /home/vagrant/ansible/vault_pass13.txt"
+        expect_rc: 0
+
+      - id: "3.4"
+        description: "/opt/app.conf contains the vaulted db_password on node3"
+        node: node3
+        command: "sudo grep -q 'SecureDB456' /opt/app.conf"
+        expect_rc: 0
+
+  # ── Task 4: Create a Role with Dependencies ──
+  - id: "4"
+    title: "Create a Role with Dependencies"
+    points: 1
+    description: |
+      The meta/main.yml file in a role serves two purposes:
+        1. Metadata: author, company, license, description, tags
+        2. Dependencies: a list of other roles that must run BEFORE this role
+
+      Role dependencies declared in meta/main.yml are automatic. When you apply
+      a role that has dependencies, Ansible runs the dependency roles first —
+      without you needing to list them in the playbook. This prevents you from
+      duplicating common setup (package installs, user creation, sysctl settings)
+      across multiple roles.
+
+      The meta/main.yml dependencies format:
+
+        ---
+        dependencies:
+          - role: common
+
+      Or with variable overrides:
+
+        ---
+        dependencies:
+          - role: common
+            vars:
+              some_var: override_value
+
+      The dependency chain is resolved at play parse time. If multiple roles
+      depend on the same role, Ansible is smart enough to run it only once
+      (unless allow_duplicates: true is set in the dependency's meta/).
+
+      Tip: On the exam, "role dependencies" means meta/main.yml. If the
+      task says "role X should automatically include role Y", that is
+      meta/main.yml. Do not confuse this with requirements.yml (which installs
+      roles from Galaxy — a separate mechanism).
+
+      ─────────────────────────────────────────────────────────────────────
+      THE TASK
+      ─────────────────────────────────────────────────────────────────────
+
+      Step 1 — Create the common role:
+        cd /home/vagrant/ansible
+        ansible-galaxy init roles/common
+
+      Step 2 — Write roles/common/tasks/main.yml:
+
+        ---
+        - name: Install common utility packages
+          ansible.builtin.dnf:
+            name:
+              - vim-enhanced
+              - tree
+            state: present
+
+      Step 3 — Create the websetup role:
+        ansible-galaxy init roles/websetup
+
+      Step 4 — Write roles/websetup/meta/main.yml to declare the dependency:
+
+        ---
+        galaxy_info:
+          author: vagrant
+          description: Web server setup role
+          license: MIT
+          min_ansible_version: "2.9"
+
+        dependencies:
+          - role: common
+
+      Step 5 — Write roles/websetup/tasks/main.yml:
+
+        ---
+        - name: Install httpd
+          ansible.builtin.dnf:
+            name: httpd
+            state: present
+
+        - name: Start and enable httpd
+          ansible.builtin.service:
+            name: httpd
+            state: started
+            enabled: true
+
+      When this role runs, Ansible will execute the common role first
+      (installing vim-enhanced and tree), then execute websetup's own tasks
+      (installing and starting httpd). You do not mention common anywhere in
+      the playbook — the dependency is entirely self-contained in the role.
+
+      Tip: Partial credit IS given. Complete what you can, never leave a
+      task blank. Even if you only create meta/main.yml with the correct
+      dependencies structure but the tasks are incomplete, you earn points.
+    checks:
+      - id: "4.1"
+        description: "roles/common/tasks/main.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/roles/common/tasks/main.yml"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "roles/common/tasks/main.yml installs vim-enhanced"
+        node: control
+        command: "grep -q 'vim-enhanced' /home/vagrant/ansible/roles/common/tasks/main.yml"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "roles/websetup/meta/main.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/roles/websetup/meta/main.yml"
+        expect_rc: 0
+
+      - id: "4.4"
+        description: "roles/websetup/meta/main.yml declares dependency on common"
+        node: control
+        command: "grep -q 'common' /home/vagrant/ansible/roles/websetup/meta/main.yml"
+        expect_rc: 0
+
+      - id: "4.5"
+        description: "roles/websetup/tasks/main.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/roles/websetup/tasks/main.yml"
+        expect_rc: 0
+
+  # ── Task 5: Use a Role with Dependencies in a Playbook ──
+  - id: "5"
+    title: "Use a Role with Dependencies in a Playbook"
+    points: 1
+    description: |
+      With the dependency declared in meta/main.yml, your playbook only needs
+      to reference the top-level role. Ansible resolves the dependency chain
+      automatically before the first task of the play runs.
+
+      Execution order when websetup has dependency on common:
+        1. common role tasks run (vim-enhanced and tree installed)
+        2. websetup role tasks run (httpd installed and started)
+        3. Any tasks: listed directly in the play run last
+
+      This is one of the most powerful role features: you encode the dependency
+      knowledge in the role itself, not in every playbook that uses it. A new
+      developer (or exam grader) who writes a playbook using only websetup
+      automatically benefits from common without knowing it exists.
+
+      Verify the dependency chain is working by checking that BOTH vim-enhanced
+      AND httpd are installed after running a playbook that only mentions websetup.
+
+      ─────────────────────────────────────────────────────────────────────
+      THE TASK
+      ─────────────────────────────────────────────────────────────────────
+
+      Step 1 — Create /home/vagrant/ansible/websetup.yml:
+
+        ---
+        - name: Apply websetup role to node1 (common dependency runs first)
+          hosts: node1.lab.local
+          roles:
+            - websetup
+
+      Step 2 — Syntax check first (always):
+        cd /home/vagrant/ansible
+        ansible-playbook --syntax-check websetup.yml
+
+      Step 3 — Run the playbook:
+        ansible-playbook websetup.yml
+
+      Step 4 — Verify that BOTH the dependency (common) and the role itself
+      (websetup) installed their packages:
+        ansible node1.lab.local -m command -a "rpm -q vim-enhanced"
+        ansible node1.lab.local -m command -a "rpm -q tree"
+        ansible node1.lab.local -m command -a "systemctl is-active httpd"
+
+      All three commands should succeed. The vim-enhanced and tree packages prove
+      the common dependency ran. The active httpd proves websetup ran.
+
+      Troubleshooting tips:
+        - If "ERROR! the role 'websetup' was not found" — check roles_path in
+          ansible.cfg and confirm the role exists at that path.
+        - If common tasks were skipped — check meta/main.yml indentation and
+          that the dependencies: key is at the top level, not nested under
+          galaxy_info:.
+
+      Tip: Use ansible-galaxy init to create role skeleton — the generated
+      meta/main.yml already has a commented-out dependencies: section you can
+      uncomment and fill in. This saves you from remembering the exact syntax.
+    checks:
+      - id: "5.1"
+        description: "websetup.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/websetup.yml"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "websetup.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check websetup.yml"
+        expect_rc: 0
+
+      - id: "5.3"
+        description: "vim-enhanced is installed on node1 (common dependency ran)"
+        node: node1
+        command: "rpm -q vim-enhanced"
+        expect_rc: 0
+
+      - id: "5.4"
+        description: "httpd is active on node1 (websetup role ran)"
+        node: node1
+        command: "systemctl is-active httpd"
+        expect_stdout: "active"

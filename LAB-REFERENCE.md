@@ -1,4 +1,4 @@
-# RHCE Lab Reference
+# Lab Reference
 
 ## Lab Architecture
 

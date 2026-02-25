@@ -1,0 +1,691 @@
+---
+id: exam3
+title: "Practice Exam 3"
+duration: 14400
+passing_score: 70
+working_dir: /home/vagrant/exam
+solutions_file: ../solutions/exam3_solutions.md
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [workers, webservers, lab]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [workers, dbservers, lab]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [workers, webservers, dbservers, lab]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [workers, lab]
+  node5:
+    hostname: node5.lab.local
+    ip: "192.168.56.24"
+    ssh_user: vagrant
+    groups: [workers, lab]
+
+tasks:
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Task 1: Ansible Configuration
+  # ═══════════════════════════════════════════════════════════════════
+  - id: "1"
+    title: "Configure Ansible"
+    points: 30
+    description: |
+      Configure Ansible on the control node for this exam environment.
+
+      1. Create /home/vagrant/exam/ansible.cfg with:
+         - inventory = /home/vagrant/exam/inventory
+         - remote_user = vagrant
+         - roles_path = /home/vagrant/exam/roles
+         - collections_path = /home/vagrant/exam/collections
+         - become = True
+         - become_method = sudo
+         - become_user = root
+         - host_key_checking = False
+         - vault_password_file = /home/vagrant/exam/.vault_key
+
+      2. Create the static inventory /home/vagrant/exam/inventory:
+         - node1.lab.local in groups [webservers] and [lab]
+         - node2.lab.local in groups [dbservers] and [lab]
+         - node3.lab.local in groups [webservers], [dbservers], and [lab]
+
+      3. Create /home/vagrant/exam/.vault_key containing the single line:
+         practice99
+
+      4. Install the following collections into /home/vagrant/exam/collections:
+         - ansible.posix
+         - community.general
+    checks:
+      - id: "1.1"
+        description: "ansible.cfg exists"
+        node: control
+        command: "test -f /home/vagrant/exam/ansible.cfg"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "ansible.cfg has inventory path"
+        node: control
+        command: "grep -q 'inventory.*=.*/home/vagrant/exam/inventory' /home/vagrant/exam/ansible.cfg"
+        expect_rc: 0
+
+      - id: "1.3"
+        description: "ansible.cfg has remote_user = vagrant"
+        node: control
+        command: "grep -q 'remote_user.*=.*vagrant' /home/vagrant/exam/ansible.cfg"
+        expect_rc: 0
+
+      - id: "1.4"
+        description: "ansible.cfg has become = True"
+        node: control
+        command: "grep -q 'become.*=.*[Tt]rue' /home/vagrant/exam/ansible.cfg"
+        expect_rc: 0
+
+      - id: "1.5"
+        description: "ansible.cfg has vault_password_file"
+        node: control
+        command: "grep -q 'vault_password_file' /home/vagrant/exam/ansible.cfg"
+        expect_rc: 0
+
+      - id: "1.6"
+        description: "ansible.cfg has host_key_checking = False"
+        node: control
+        command: "grep -q 'host_key_checking.*=.*[Ff]alse' /home/vagrant/exam/ansible.cfg"
+        expect_rc: 0
+
+      - id: "1.7"
+        description: "inventory file exists"
+        node: control
+        command: "test -f /home/vagrant/exam/inventory"
+        expect_rc: 0
+
+      - id: "1.8"
+        description: "inventory has [webservers] group"
+        node: control
+        command: "grep -q '\\[webservers\\]' /home/vagrant/exam/inventory"
+        expect_rc: 0
+
+      - id: "1.9"
+        description: "inventory has [dbservers] group"
+        node: control
+        command: "grep -q '\\[dbservers\\]' /home/vagrant/exam/inventory"
+        expect_rc: 0
+
+      - id: "1.10"
+        description: ".vault_key exists"
+        node: control
+        command: "test -f /home/vagrant/exam/.vault_key"
+        expect_rc: 0
+
+      - id: "1.11"
+        description: ".vault_key contains practice99"
+        node: control
+        command: "cat /home/vagrant/exam/.vault_key"
+        expect_stdout: "practice99"
+
+      - id: "1.12"
+        description: "ansible.posix collection installed"
+        node: control
+        command: "test -d /home/vagrant/exam/collections/ansible_collections/ansible/posix"
+        expect_rc: 0
+
+      - id: "1.13"
+        description: "community.general collection installed"
+        node: control
+        command: "test -d /home/vagrant/exam/collections/ansible_collections/community/general"
+        expect_rc: 0
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Task 2: Ad-Hoc Commands Script
+  # ═══════════════════════════════════════════════════════════════════
+  - id: "2"
+    title: "Ad-Hoc Commands Script"
+    points: 20
+    description: |
+      Create an executable shell script /home/vagrant/exam/adhoc.sh that uses
+      Ansible ad-hoc commands to perform the following on ALL managed nodes:
+
+      1. Create user 'labuser' using the ansible.builtin.user module
+      2. Create directory /opt/lab with mode 0755 using the ansible.builtin.file module
+      3. Copy /etc/hostname to /tmp/control-name using the ansible.builtin.copy module
+         with remote_src: yes (so it copies the remote /etc/hostname)
+
+      The script must be executable (chmod +x or equivalent).
+      Each command should target 'all' hosts and reference the inventory with -i.
+    checks:
+      - id: "2.1"
+        description: "adhoc.sh exists and is executable"
+        node: control
+        command: "test -x /home/vagrant/exam/adhoc.sh"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "labuser exists on node1"
+        node: node1
+        command: "id labuser"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "/opt/lab directory exists on node1"
+        node: node1
+        command: "test -d /opt/lab"
+        expect_rc: 0
+
+      - id: "2.4"
+        description: "/tmp/control-name exists on node1"
+        node: node1
+        command: "test -f /tmp/control-name"
+        expect_rc: 0
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Task 3: Vault-Encrypted Variables
+  # ═══════════════════════════════════════════════════════════════════
+  - id: "3"
+    title: "Vault-Encrypted Variables and User Creation"
+    points: 30
+    description: |
+      1. Create a vault-encrypted file /home/vagrant/exam/secret.yml using the
+         vault password from /home/vagrant/exam/.vault_key. The file must contain:
+           app_password: "Appl!c@t10n"
+           db_secret: "Dat@b@se99"
+
+      2. Create a playbook /home/vagrant/exam/create-vault-users.yml that:
+         - Uses vars_files to load secret.yml
+         - Creates user 'svcuser1' on all managed hosts with password set to
+           {{ app_password | password_hash('sha512') }}
+         - Creates user 'svcuser2' on dbservers only with password set to
+           {{ db_secret | password_hash('sha512') }}
+         - All users should have shell /bin/bash
+
+      Run the playbook using the vault password file.
+    checks:
+      - id: "3.1"
+        description: "secret.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/secret.yml"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "secret.yml is vault-encrypted"
+        node: control
+        command: "head -1 /home/vagrant/exam/secret.yml"
+        expect_stdout_contains: "$ANSIBLE_VAULT"
+
+      - id: "3.3"
+        description: "create-vault-users.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/create-vault-users.yml"
+        expect_rc: 0
+
+      - id: "3.4"
+        description: "create-vault-users.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook --syntax-check create-vault-users.yml"
+        expect_rc: 0
+
+      - id: "3.5"
+        description: "svcuser1 exists on node1"
+        node: node1
+        command: "id svcuser1"
+        expect_rc: 0
+
+      - id: "3.6"
+        description: "svcuser2 exists on node2 (dbservers)"
+        node: node2
+        command: "id svcuser2"
+        expect_rc: 0
+
+      - id: "3.7"
+        description: "svcuser2 does NOT exist on node1 (not a dbserver)"
+        node: node1
+        command: "id svcuser2"
+        expect_rc: 1
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Task 4: Packages and Services
+  # ═══════════════════════════════════════════════════════════════════
+  - id: "4"
+    title: "Install Packages and Manage Services"
+    points: 30
+    description: |
+      Create a playbook /home/vagrant/exam/packages.yml with separate plays
+      for each requirement:
+
+      Play 1 — webservers group:
+        - Install httpd and mod_ssl
+        - Start and enable the httpd service
+
+      Play 2 — dbservers group:
+        - Install mariadb-server
+        - Start and enable the mariadb service
+
+      Play 3 — lab group (all lab hosts):
+        - Install chrony
+        - Start and enable the chronyd service
+
+      Use the ansible.builtin.dnf module for package installation and
+      ansible.builtin.service (or systemd) for service management.
+    checks:
+      - id: "4.1"
+        description: "packages.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/packages.yml"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "packages.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook --syntax-check packages.yml"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "httpd installed on node1 (webservers)"
+        node: node1
+        command: "rpm -q httpd"
+        expect_rc: 0
+
+      - id: "4.4"
+        description: "httpd service is active on node1"
+        node: node1
+        command: "systemctl is-active httpd"
+        expect_stdout: "active"
+
+      - id: "4.5"
+        description: "httpd service is enabled on node1"
+        node: node1
+        command: "systemctl is-enabled httpd"
+        expect_stdout: "enabled"
+
+      - id: "4.6"
+        description: "mariadb-server installed on node2 (dbservers)"
+        node: node2
+        command: "rpm -q mariadb-server"
+        expect_rc: 0
+
+      - id: "4.7"
+        description: "mariadb service is active on node2"
+        node: node2
+        command: "systemctl is-active mariadb"
+        expect_stdout: "active"
+
+      - id: "4.8"
+        description: "chrony installed on node1 (lab)"
+        node: node1
+        command: "rpm -q chrony"
+        expect_rc: 0
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Task 5: Jinja2 Template
+  # ═══════════════════════════════════════════════════════════════════
+  - id: "5"
+    title: "Deploy Server Info with a Jinja2 Template"
+    points: 30
+    description: |
+      1. Create the Jinja2 template /home/vagrant/exam/templates/server-info.j2
+         with the following content (substitute the actual Ansible facts/variables):
+
+           Hostname: <ansible_fqdn>
+           IP Address: <ansible_default_ipv4.address>
+           Memory: <ansible_memtotal_mb> MB
+           OS: <ansible_distribution> <ansible_distribution_version>
+           Role: <webserver|dbserver|unknown>
+
+         The Role line must use a Jinja2 conditional:
+           - "webserver" if the host is in the webservers group
+           - "dbserver" if the host is in the dbservers group (and not webservers)
+           - "unknown" otherwise
+
+      2. Create a playbook /home/vagrant/exam/server-info.yml that:
+         - Runs on the lab group
+         - Uses the template module to deploy the template to /etc/server-info.txt
+         - Sets owner root, group root, mode 0644
+    checks:
+      - id: "5.1"
+        description: "templates/server-info.j2 exists"
+        node: control
+        command: "test -f /home/vagrant/exam/templates/server-info.j2"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "server-info.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/server-info.yml"
+        expect_rc: 0
+
+      - id: "5.3"
+        description: "server-info.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook --syntax-check server-info.yml"
+        expect_rc: 0
+
+      - id: "5.4"
+        description: "/etc/server-info.txt exists on node1"
+        node: node1
+        command: "sudo test -f /etc/server-info.txt"
+        expect_rc: 0
+
+      - id: "5.5"
+        description: "/etc/server-info.txt contains node1's hostname"
+        node: node1
+        command: "sudo grep -q 'node1' /etc/server-info.txt"
+        expect_rc: 0
+
+      - id: "5.6"
+        description: "/etc/server-info.txt contains Role line on node1"
+        node: node1
+        command: "sudo grep -q 'Role:' /etc/server-info.txt"
+        expect_rc: 0
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Task 6: Custom Role
+  # ═══════════════════════════════════════════════════════════════════
+  - id: "6"
+    title: "Create and Apply a Custom Role"
+    points: 35
+    description: |
+      1. Create an Ansible role at /home/vagrant/exam/roles/motd using the
+         standard role directory structure (tasks/, defaults/, templates/).
+
+         The role must:
+           - Have a default variable env_type set to "development"
+           - Deploy a Jinja2 template to /etc/motd with this content:
+               ================================================
+               Welcome to <ansible_hostname>
+               Managed by Ansible
+               Environment: <env_type>
+               ================================================
+
+      2. Create a playbook /home/vagrant/exam/motd.yml that:
+         - Applies the motd role to all lab hosts
+         - Overrides env_type to "production" for the dbservers group
+           (use group_vars or set vars in the play for dbservers)
+    checks:
+      - id: "6.1"
+        description: "roles/motd/tasks/main.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/roles/motd/tasks/main.yml"
+        expect_rc: 0
+
+      - id: "6.2"
+        description: "roles/motd/defaults/main.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/roles/motd/defaults/main.yml"
+        expect_rc: 0
+
+      - id: "6.3"
+        description: "roles/motd/templates/ directory exists"
+        node: control
+        command: "test -d /home/vagrant/exam/roles/motd/templates"
+        expect_rc: 0
+
+      - id: "6.4"
+        description: "motd.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/motd.yml"
+        expect_rc: 0
+
+      - id: "6.5"
+        description: "motd.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook --syntax-check motd.yml"
+        expect_rc: 0
+
+      - id: "6.6"
+        description: "/etc/motd on node1 contains 'Welcome to'"
+        node: node1
+        command: "grep -q 'Welcome to' /etc/motd"
+        expect_rc: 0
+
+      - id: "6.7"
+        description: "/etc/motd on node2 (dbservers) contains 'production'"
+        node: node2
+        command: "grep -q 'production' /etc/motd"
+        expect_rc: 0
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Task 7: RHEL System Roles
+  # ═══════════════════════════════════════════════════════════════════
+  - id: "7"
+    title: "Use RHEL System Roles"
+    points: 35
+    description: |
+      Part A — Time Synchronization:
+        Create a playbook /home/vagrant/exam/timesync.yml that:
+          - Runs on the lab group
+          - Uses the fedora.linux_system_roles.timesync role
+            (the collection must already be installed under collections/)
+          - Sets the following variables:
+              timesync_ntp_servers:
+                - hostname: pool.ntp.org
+                  iburst: yes
+
+      Part B — Storage with community.general:
+        Create a playbook /home/vagrant/exam/storage.yml that:
+          - Runs on the lab group
+          - Uses community.general.lvg to create volume group 'exam_vg' on /dev/loop0
+          - Uses community.general.lvol to create logical volume 'exam_lv' of 500m
+            in exam_vg
+          - Creates an XFS filesystem on /dev/exam_vg/exam_lv
+          - Mounts /dev/exam_vg/exam_lv at /exam-data (create the directory if needed)
+          - Uses ignore_errors: yes on tasks that may fail in this environment
+    checks:
+      - id: "7.1"
+        description: "timesync.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/timesync.yml"
+        expect_rc: 0
+
+      - id: "7.2"
+        description: "timesync.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook --syntax-check timesync.yml"
+        expect_rc: 0
+
+      - id: "7.3"
+        description: "storage.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/storage.yml"
+        expect_rc: 0
+
+      - id: "7.4"
+        description: "storage.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook --syntax-check storage.yml"
+        expect_rc: 0
+
+      - id: "7.5"
+        description: "chrony config contains pool.ntp.org on node1"
+        node: node1
+        command: "sudo grep -q 'pool.ntp.org' /etc/chrony.conf"
+        expect_rc: 0
+
+      - id: "7.6"
+        description: "/exam-data mount exists on node1"
+        node: node1
+        command: "findmnt /exam-data"
+        expect_rc: 0
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Task 8: Firewall and SELinux
+  # ═══════════════════════════════════════════════════════════════════
+  - id: "8"
+    title: "Configure Firewall and SELinux"
+    points: 30
+    description: |
+      Create a playbook /home/vagrant/exam/security.yml with the following plays:
+
+      Play 1 — all lab hosts:
+        - Ensure firewalld is installed, started, and enabled
+
+      Play 2 — webservers group:
+        - Open the http and https services in the firewall (permanent)
+        - Enable the httpd_can_network_connect SELinux boolean (persistent)
+        Use ansible.posix.firewalld and ansible.posix.seboolean modules.
+
+      Play 3 — dbservers group:
+        - Open the mysql service in the firewall (permanent)
+        Use ansible.posix.firewalld.
+    checks:
+      - id: "8.1"
+        description: "security.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/security.yml"
+        expect_rc: 0
+
+      - id: "8.2"
+        description: "security.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook --syntax-check security.yml"
+        expect_rc: 0
+
+      - id: "8.3"
+        description: "firewalld is active on node1"
+        node: node1
+        command: "systemctl is-active firewalld"
+        expect_stdout: "active"
+
+      - id: "8.4"
+        description: "http service open in firewall on node1 (webservers)"
+        node: node1
+        command: "sudo firewall-cmd --list-services | grep -q http"
+        expect_rc: 0
+
+      - id: "8.5"
+        description: "httpd_can_network_connect SELinux boolean is on on node1"
+        node: node1
+        command: "getsebool httpd_can_network_connect | grep -q ' on'"
+        expect_rc: 0
+
+      - id: "8.6"
+        description: "mysql service open in firewall on node2 (dbservers)"
+        node: node2
+        command: "sudo firewall-cmd --list-services | grep -q mysql"
+        expect_rc: 0
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Task 9: Conditional and Loop Playbook
+  # ═══════════════════════════════════════════════════════════════════
+  - id: "9"
+    title: "Conditionals and Loops"
+    points: 30
+    description: |
+      Create a playbook /home/vagrant/exam/conditional-loop.yml that runs on
+      all lab hosts and installs packages based on group membership:
+
+      - Hosts in BOTH webservers AND dbservers (node3): install httpd,
+        mariadb-server, php, and php-mysqlnd
+      - Hosts in webservers ONLY (not dbservers, i.e. node1): install httpd and php
+      - Hosts in dbservers ONLY (not webservers, i.e. node2): install mariadb-server
+      - Other lab hosts (node4, node5): install no extra packages
+
+      Use a loop with a list variable and 'when:' conditions based on group_names.
+      After installation, create /tmp/installed-packages.txt on each host listing
+      the packages that were installed (use lineinfile or copy with content).
+    checks:
+      - id: "9.1"
+        description: "conditional-loop.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/conditional-loop.yml"
+        expect_rc: 0
+
+      - id: "9.2"
+        description: "conditional-loop.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook --syntax-check conditional-loop.yml"
+        expect_rc: 0
+
+      - id: "9.3"
+        description: "httpd installed on node3 (webservers+dbservers)"
+        node: node3
+        command: "rpm -q httpd"
+        expect_rc: 0
+
+      - id: "9.4"
+        description: "mariadb-server installed on node3 (webservers+dbservers)"
+        node: node3
+        command: "rpm -q mariadb-server"
+        expect_rc: 0
+
+      - id: "9.5"
+        description: "/tmp/installed-packages.txt exists on node1"
+        node: node1
+        command: "test -f /tmp/installed-packages.txt"
+        expect_rc: 0
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Task 10: Error Handling with Block/Rescue/Always
+  # ═══════════════════════════════════════════════════════════════════
+  - id: "10"
+    title: "Error Handling with Block/Rescue/Always"
+    points: 30
+    description: |
+      Create a playbook /home/vagrant/exam/robust-deploy.yml that runs on
+      the webservers group and demonstrates block/rescue/always error handling:
+
+      block:
+        - Create directory /opt/app with mode 0755
+        - Attempt to download http://control.lab.local/app.tar.gz to /opt/app/
+          using ansible.builtin.get_url (this will fail — no such file exists)
+
+      rescue:
+        - Create /opt/app/maintenance.html with content "Site under maintenance"
+        - Append a timestamped error message to /var/log/deploy-errors.log
+
+      always:
+        - Write /tmp/deploy-status.txt with a message indicating the deployment
+          completed (whether or not it succeeded), including the current date
+          (use ansible_date_time.date or similar)
+
+      Also define a handler named 'reload httpd' that reloads httpd, and notify
+      it from at least one task in the block.
+    checks:
+      - id: "10.1"
+        description: "robust-deploy.yml exists"
+        node: control
+        command: "test -f /home/vagrant/exam/robust-deploy.yml"
+        expect_rc: 0
+
+      - id: "10.2"
+        description: "robust-deploy.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/exam && ansible-playbook --syntax-check robust-deploy.yml"
+        expect_rc: 0
+
+      - id: "10.3"
+        description: "/opt/app/maintenance.html exists on node1 (rescue ran)"
+        node: node1
+        command: "test -f /opt/app/maintenance.html"
+        expect_rc: 0
+
+      - id: "10.4"
+        description: "/opt/app/maintenance.html contains expected content on node1"
+        node: node1
+        command: "grep -q 'maintenance' /opt/app/maintenance.html"
+        expect_rc: 0
+
+      - id: "10.5"
+        description: "/tmp/deploy-status.txt exists on node1 (always block ran)"
+        node: node1
+        command: "test -f /tmp/deploy-status.txt"
+        expect_rc: 0
+
+      - id: "10.6"
+        description: "/var/log/deploy-errors.log exists on node1 (rescue logged error)"
+        node: node1
+        command: "sudo test -f /var/log/deploy-errors.log"
+        expect_rc: 0

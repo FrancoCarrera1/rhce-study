@@ -1,0 +1,571 @@
+---
+id: lesson14_additional_system_roles
+title: "Lesson 14: Additional RHEL System Roles"
+duration: 3600
+passing_score: 100
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node5:
+    hostname: node5.lab.local
+    ip: "192.168.56.24"
+    ssh_user: vagrant
+    groups: [workers]
+
+tasks:
+  # ── Task 1: Explore Available System Roles ──
+  - id: "1"
+    title: "Explore Available System Roles"
+    points: 1
+    description: |
+      Lesson 11 introduced the timesync and selinux system roles. This lesson
+      covers three more that are commonly used: storage, network, and firewall. Before using any system role, you need to know how to find
+      what roles are available and where their documentation lives.
+
+      On a RHEL 9 environment, system roles are installed as an RPM package:
+        sudo dnf install rhel-system-roles
+
+      This places role documentation here:
+        /usr/share/doc/rhel-system-roles/
+
+      Each subdirectory contains:
+        README.md                  — Full variable reference
+        example-<role>-playbook.yml — Copy this, modify, run. Never memorise
+                                      variable names — find them in the README.
+
+        ls /usr/share/doc/rhel-system-roles/
+        cat /usr/share/doc/rhel-system-roles/storage/README.md
+        cat /usr/share/doc/rhel-system-roles/firewall/README.md
+
+      In this Vagrant lab, the roles come from the fedora.linux_system_roles
+      collection installed in Lesson 11. Role documentation lives inside the
+      collection:
+        ls /home/vagrant/ansible/collections/ansible_collections/fedora/linux_system_roles/roles/
+
+      To list the names of all available system roles from the collection:
+        ansible-galaxy collection list fedora.linux_system_roles \
+          --collections-path /home/vagrant/ansible/collections
+
+        # Or inspect the roles directory directly:
+        ls /home/vagrant/ansible/collections/ansible_collections/fedora/linux_system_roles/roles/
+
+      Tip: System role docs are at /usr/share/doc/rhel-system-roles/ —
+      copy their examples! This is the fastest path to a working playbook. You are not expected to memorise variable names.
+      Open the README, find the relevant variables, copy the example, edit
+      values, run. This approach beats trying to recall variable names from
+      memory every time.
+
+      ─────────────────────────────────────────────────────────────────────
+      THE TASK
+      ─────────────────────────────────────────────────────────────────────
+
+      Create a record of the available system roles:
+        ls /home/vagrant/ansible/collections/ansible_collections/fedora/linux_system_roles/roles/ \
+          > /home/vagrant/ansible/system_roles_list.txt
+
+      Examine the file to confirm the roles you will use in this lesson
+      are present (storage, network, firewall):
+        cat /home/vagrant/ansible/system_roles_list.txt
+
+      If the collection is not yet installed from Lesson 11, install it now:
+        ansible-galaxy collection install fedora.linux_system_roles \
+          -p /home/vagrant/ansible/collections
+
+      Tip: On the exam, read ALL tasks first. System role tasks often
+      build on each other (install collection, then use roles). If you see
+      a system role task, install the collection as your very first action —
+      installation takes time and you want it done while you write other
+      playbooks.
+    checks:
+      - id: "1.1"
+        description: "system_roles_list.txt exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/system_roles_list.txt"
+        expect_rc: 0
+
+  # ── Task 2: Storage System Role — Create LVM ──
+  - id: "2"
+    title: "Storage System Role — Create LVM"
+    points: 1
+    description: |
+      The storage system role manages disks, partitions, LVM volume groups,
+      logical volumes, filesystems, and mounts. It is the preferred approach
+      when a task asks you to create LVM structures.
+
+      The role uses a single variable: storage_pools (a list of pool objects).
+      Each pool represents a volume group with one or more logical volumes.
+
+      Basic structure:
+
+        vars:
+          storage_pools:
+            - name: data_vg           # volume group name
+              disks:
+                - /dev/sdb            # physical disk(s) to use
+              volumes:
+                - name: data_lv       # logical volume name
+                  size: "500m"        # size (m=MiB, g=GiB, or % of VG)
+                  fs_type: xfs        # filesystem type
+                  mount_point: /mnt/data  # where to mount it
+                  state: present
+
+      The role handles all steps automatically: pvcreate, vgcreate, lvcreate,
+      mkfs, mount entry in /etc/fstab, and mounting. A single vars block
+      replaces five or six separate tasks.
+
+      Alternative approach using individual modules (manual fallback):
+      If the storage role is unavailable or the disk device differs, you can
+      accomplish the same result with:
+        community.general.lvg    — Create/manage volume groups
+        community.general.lvol   — Create/manage logical volumes
+        ansible.builtin.filesystem — Format a device
+        ansible.builtin.mount    — Mount and manage fstab entries
+
+      Manual example:
+        - name: Create volume group
+          community.general.lvg:
+            vg: data_vg
+            pvs: /dev/loop0
+
+        - name: Create logical volume
+          community.general.lvol:
+            vg: data_vg
+            lv: data_lv
+            size: 500m
+
+        - name: Create XFS filesystem
+          ansible.builtin.filesystem:
+            fstype: xfs
+            dev: /dev/data_vg/data_lv
+
+        - name: Mount logical volume
+          ansible.builtin.mount:
+            path: /mnt/data
+            src: /dev/data_vg/data_lv
+            fstype: xfs
+            state: mounted
+
+      Tip: On the exam, the storage system role approach is preferred
+      and shorter. Use it when the collection is available. Know the manual
+      module approach as a fallback in case the role is not available or
+      the storage_pools syntax does not suit the exact requirement.
+
+      ─────────────────────────────────────────────────────────────────────
+      THE TASK
+      ─────────────────────────────────────────────────────────────────────
+
+      In the Vagrant lab, real additional disks may not be present. This task
+      uses a loop device (/dev/loop0) as a stand-in. The playbook uses
+      ignore_errors: true because loop device availability varies per VM state.
+      The LEARNING GOAL is writing a correct storage role playbook — whether
+      the mount appears on node1 depends on your VM configuration.
+
+      Create /home/vagrant/ansible/storage.yml:
+
+        ---
+        - name: Create LVM volume group and logical volume using storage role
+          hosts: node1.lab.local
+          vars:
+            storage_pools:
+              - name: data_vg
+                disks:
+                  - /dev/loop0
+                volumes:
+                  - name: data_lv
+                    size: "500m"
+                    fs_type: xfs
+                    mount_point: /mnt/data
+                    state: present
+          roles:
+            - fedora.linux_system_roles.storage
+          ignore_errors: true
+
+      Syntax check the playbook:
+        cd /home/vagrant/ansible
+        ansible-playbook --syntax-check storage.yml
+
+      Attempt to run it (errors expected if loop0 is not set up):
+        ansible-playbook storage.yml
+
+      Check if the mount appeared (may fail if loop0 not configured):
+        ansible node1.lab.local -m command -a "findmnt /mnt/data"
+
+      Understanding findmnt output:
+        TARGET     SOURCE               FSTYPE OPTIONS
+        /mnt/data  /dev/mapper/data_vg-data_lv xfs    rw,...
+
+      If the mount is absent, that is acceptable for this lab. The check
+      below tests the playbook file and syntax — not the live mount.
+    checks:
+      - id: "2.1"
+        description: "storage.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/storage.yml"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "storage.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check storage.yml"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "storage.yml references the storage system role"
+        node: control
+        command: "grep -q 'linux_system_roles.storage' /home/vagrant/ansible/storage.yml"
+        expect_rc: 0
+
+  # ── Task 3: Network System Role ──
+  - id: "3"
+    title: "Network System Role"
+    points: 1
+    description: |
+      The network system role manages NetworkManager connections. It can set
+      static IP addresses, configure DNS, set MTU, manage bonding/teaming, and
+      bring interfaces up or down.
+
+      The main variable is network_connections — a list of connection profile
+      objects. Each object maps closely to a NetworkManager connection profile.
+
+      Structure of a network_connections entry:
+
+        network_connections:
+          - name: eth1                  # Connection profile name (nmcli name)
+            type: ethernet
+            interface_name: eth1        # Physical interface
+            state: up                   # 'up', 'down', 'absent'
+            ip:
+              address:
+                - "192.168.56.20/24"   # Static address in CIDR notation
+              gateway4: "192.168.56.1"
+              dns:
+                - "8.8.8.8"
+                - "8.8.4.4"
+              dns_search:
+                - "lab.local"
+
+      For DHCP instead of static:
+        ip:
+          dhcp4: true                   # Use DHCP for IPv4
+          auto6: false                  # Do not use SLAAC for IPv6
+
+      Important lab limitation: In the Vagrant environment, running this role
+      against a live interface risks breaking the SSH connection that Ansible
+      uses to communicate with the host. For this reason, this task focuses on
+      writing a correctly structured playbook and syntax-checking it — not
+      running it against a live interface.
+
+      In production, you may run the network role. The lab environment
+      uses a dedicated management interface that the role will not touch. Read
+      the task carefully — it will specify which interface to configure.
+
+      Tip: System role docs are at /usr/share/doc/rhel-system-roles/ —
+      copy their examples! The network role README is extensive. For the exam,
+      find the static IP example, copy it, and substitute the correct values
+      (interface name, IP, prefix, gateway).
+
+        cat /usr/share/doc/rhel-system-roles/network/README.md | less
+
+      ─────────────────────────────────────────────────────────────────────
+      THE TASK
+      ─────────────────────────────────────────────────────────────────────
+
+      Create /home/vagrant/ansible/network.yml that documents the structure
+      for configuring a static IP on node1's second interface. This playbook
+      is intentionally NOT run to avoid breaking lab connectivity.
+
+        ---
+        - name: Configure static network connection using network system role
+          hosts: node1.lab.local
+          vars:
+            network_connections:
+              - name: eth1
+                type: ethernet
+                interface_name: eth1
+                state: up
+                ip:
+                  address:
+                    - "192.168.100.20/24"
+                  gateway4: "192.168.100.1"
+                  dns:
+                    - "8.8.8.8"
+                  dns_search:
+                    - "lab.local"
+          roles:
+            - fedora.linux_system_roles.network
+
+      Syntax check the playbook:
+        cd /home/vagrant/ansible
+        ansible-playbook --syntax-check network.yml
+
+      DO NOT run this playbook in the Vagrant lab — it may disconnect your
+      SSH session. On the exam, confirm the interface name first:
+        ansible node1.lab.local -m command -a "nmcli connection show"
+
+      Then substitute the correct interface_name before running.
+    checks:
+      - id: "3.1"
+        description: "network.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/network.yml"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "network.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check network.yml"
+        expect_rc: 0
+
+  # ── Task 4: Firewall System Role ──
+  - id: "4"
+    title: "Firewall System Role"
+    points: 1
+    description: |
+      The firewall system role manages firewalld rules using the firewall
+      variable. It is the clean, declarative alternative to running
+      ansible.posix.firewalld module tasks directly.
+
+      The firewall variable is a list of rule objects. Each object specifies
+      what to manage (service or port) and the desired state:
+
+        firewall:
+          - service:
+              - http
+              - https
+            state: enabled
+            permanent: true
+            immediate: true
+
+          - port:
+              - "8443/tcp"
+              - "9000/udp"
+            state: enabled
+            permanent: true
+            immediate: true
+
+          - zone: internal                # optional — default zone if omitted
+            service:
+              - ssh
+            state: enabled
+            permanent: true
+
+      Key parameters:
+        service:    — List of firewalld service names (see firewall-cmd --list-services)
+        port:       — List of port/protocol strings in "port/protocol" format
+        state:      — 'enabled' to open, 'disabled' to close
+        permanent:  — Survive firewalld reload/reboot (true is almost always correct)
+        immediate:  — Apply right now without reload (true for instant effect)
+        zone:       — Firewalld zone name. Defaults to the default zone if omitted.
+
+      Behind the scenes the role runs firewall-cmd --permanent --add-service=...
+      and firewall-cmd --reload equivalent commands. Using the role is cleaner
+      than writing those commands by hand because it is declarative (you describe
+      what you want, not how to do it) and idempotent.
+
+      Tip: Partial credit IS given. Complete what you can, never leave a
+      task blank. A firewall playbook that correctly opens http but has a minor
+      syntax issue with the port still earns points for the http part.
+
+      Tip: Look up service names with:
+        sudo firewall-cmd --get-services | tr ' ' '\n' | grep -i http
+        sudo firewall-cmd --get-services | tr ' ' '\n' | grep -i https
+        sudo firewall-cmd --get-services | tr ' ' '\n' | grep -i ssh
+
+      ─────────────────────────────────────────────────────────────────────
+      THE TASK
+      ─────────────────────────────────────────────────────────────────────
+
+      Create /home/vagrant/ansible/firewall_role.yml targeting the webservers
+      group (node1 and node2) to open services http and https, and custom
+      port 8443/tcp:
+
+        ---
+        - name: Configure firewall on webservers using firewall system role
+          hosts: webservers
+          vars:
+            firewall:
+              - service:
+                  - http
+                  - https
+                state: enabled
+                permanent: true
+                immediate: true
+              - port:
+                  - "8443/tcp"
+                state: enabled
+                permanent: true
+                immediate: true
+          roles:
+            - fedora.linux_system_roles.firewall
+
+      Syntax check:
+        cd /home/vagrant/ansible
+        ansible-playbook --syntax-check firewall_role.yml
+
+      Run the playbook:
+        ansible-playbook firewall_role.yml
+
+      Verify on node1:
+        ansible node1.lab.local -m command \
+          -a "sudo firewall-cmd --list-services" -b
+        # Expected output includes: http https
+
+        ansible node1.lab.local -m command \
+          -a "sudo firewall-cmd --list-ports" -b
+        # Expected output includes: 8443/tcp
+    checks:
+      - id: "4.1"
+        description: "firewall_role.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/firewall_role.yml"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "firewall_role.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check firewall_role.yml"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "http service is open in firewall on node1"
+        node: node1
+        command: "sudo firewall-cmd --list-services | grep -q http"
+        expect_rc: 0
+
+      - id: "4.4"
+        description: "8443/tcp port is open in firewall on node1"
+        node: node1
+        command: "sudo firewall-cmd --list-ports | grep -q 8443"
+        expect_rc: 0
+
+  # ── Task 5: Combined System Roles Playbook ──
+  - id: "5"
+    title: "Combined System Roles Playbook"
+    points: 1
+    description: |
+      Tip: The first 30 minutes should go to infrastructure baseline tasks:
+      time sync, firewall, SELinux. These are fast to write
+      with system roles, earn multiple points, and unblock later tasks that
+      depend on the system being in a known state.
+
+      A multi-play playbook targeting different host groups for different
+      system roles is the clean exam-day pattern:
+
+        - Play 1 targets all hosts: timesync (everyone needs correct time)
+        - Play 2 targets webservers: firewall (open web ports)
+        - Play 3 targets all hosts: selinux (enforcing everywhere)
+
+      Each play is independent. If one play fails on some hosts, Ansible
+      continues to the next play with the remaining hosts. This means a
+      partial failure does not block your entire baseline.
+
+      Variable placement in multi-play playbooks:
+        - vars: under each play sets variables for THAT PLAY ONLY
+        - group_vars/ files would apply to the correct group automatically,
+          but inline vars: is more explicit and exam-grader-friendly
+        - Do not reuse variable names across plays unless they have the same
+          intended value — each play's vars: scope is independent
+
+      Tip: On the exam, read ALL tasks first. Some build on each other.
+      If you see a timesync task AND a separate firewall task, consider whether
+      combining them into a single multi-play playbook is more efficient than
+      writing two separate files. Read the task wording — if it says "single
+      playbook", combine. If it says "create a playbook for each", separate.
+
+      Tip: System role docs are at /usr/share/doc/rhel-system-roles/ —
+      copy their examples! For the selinux role, the key variable is
+      selinux_state: enforcing. For timesync, it is timesync_ntp_servers with
+      an iburst server entry. For firewall, it is the firewall: list with
+      service and port objects.
+
+      ─────────────────────────────────────────────────────────────────────
+      THE TASK
+      ─────────────────────────────────────────────────────────────────────
+
+      Create /home/vagrant/ansible/system_setup.yml with three plays:
+
+        ---
+        - name: Configure timesync on all lab hosts
+          hosts: all
+          vars:
+            timesync_ntp_servers:
+              - hostname: pool.ntp.org
+                iburst: true
+          roles:
+            - fedora.linux_system_roles.timesync
+
+        - name: Configure firewall on webservers
+          hosts: webservers
+          vars:
+            firewall:
+              - service:
+                  - http
+                  - https
+                state: enabled
+                permanent: true
+                immediate: true
+          roles:
+            - fedora.linux_system_roles.firewall
+
+        - name: Ensure SELinux is enforcing on all lab hosts
+          hosts: all
+          vars:
+            selinux_state: enforcing
+            selinux_policy: targeted
+          roles:
+            - fedora.linux_system_roles.selinux
+
+      Syntax check the playbook:
+        cd /home/vagrant/ansible
+        ansible-playbook --syntax-check system_setup.yml
+
+      Run the playbook (this configures all three subsystems in order):
+        ansible-playbook system_setup.yml
+
+      Verify timesync on node1:
+        ansible node1.lab.local -m command -a "systemctl is-active chronyd"
+        ansible node1.lab.local -m command -a "sudo grep pool.ntp.org /etc/chrony.conf" -b
+
+      Verify SELinux on node1:
+        ansible node1.lab.local -m command -a "getenforce"
+        # Expected: Enforcing
+
+      This is a common pattern for infrastructure setup. Write it once, run it,
+      and your baseline is done. You can then focus on the more complex tasks
+      knowing the infrastructure is sound.
+    checks:
+      - id: "5.1"
+        description: "system_setup.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/system_setup.yml"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "system_setup.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check system_setup.yml"
+        expect_rc: 0

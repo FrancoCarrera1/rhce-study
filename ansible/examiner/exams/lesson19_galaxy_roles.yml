@@ -1,0 +1,423 @@
+---
+id: lesson19_galaxy_roles
+title: "Lesson 19: Galaxy Roles & Requirements"
+duration: 3600
+passing_score: 80
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [webservers]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [dbservers]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [webservers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [loadbalancers]
+
+tasks:
+  # ── Task 1: Create Requirements File ──
+  - id: "1"
+    title: "Create Requirements File"
+    points: 1
+    description: |
+      Ansible Galaxy is the public hub for sharing Ansible roles and collections.
+      You may be given specific Galaxy role names and asked to install them.
+      The professional approach is to use a requirements.yml file rather than
+      installing roles ad-hoc.
+
+      The requirements.yml file format for roles:
+
+        ---
+        roles:
+          - name: geerlingguy.haproxy    # Galaxy role name (install with this name)
+
+          - src: geerlingguy.php         # 'src' is the Galaxy name
+            name: phpinfo                # 'name' sets the local alias used in playbooks
+
+      The name: field under each role entry is the local name (the name you use
+      in your playbooks with 'roles:'). The src: field (or a bare name:) is
+      where Ansible Galaxy fetches the role from.
+
+      Create /home/vagrant/ansible/roles/requirements.yml with the two roles
+      needed for this lesson:
+
+        ---
+        roles:
+          - src: geerlingguy.haproxy
+            name: balancer
+
+          - src: geerlingguy.php
+            name: phpinfo
+
+      Install the roles using the requirements file:
+        cd /home/vagrant/ansible
+        ansible-galaxy install -r roles/requirements.yml -p roles/
+
+      Key flags:
+        -r roles/requirements.yml  — Read the requirements file
+        -p roles/                  — Install into the project-local roles/ directory
+                                     instead of ~/.ansible/roles
+
+      After installation, verify the roles are present:
+        ls roles/
+        ansible-galaxy list
+
+      You should see 'balancer' and 'phpinfo' listed. The roles are installed
+      under their alias names (balancer and phpinfo), not their Galaxy names.
+
+      Pro Tip: The requirements.yml path, role names, and aliases are given to
+      you. Copy them exactly — do not guess or abbreviate.
+      If the exam says name: balancer, your playbook must reference 'balancer'
+      not 'geerlingguy.haproxy'.
+
+      Tip: If the exam environment has no internet access, roles may be
+      available from a local mirror or pre-installed under /usr/share/ansible/.
+      Always check with 'ansible-galaxy list' before attempting to install.
+    checks:
+      - id: "1.1"
+        description: "roles/requirements.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/roles/requirements.yml"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "requirements.yml contains balancer role entry"
+        node: control
+        command: "grep -q 'balancer' /home/vagrant/ansible/roles/requirements.yml"
+        expect_rc: 0
+
+      - id: "1.3"
+        description: "requirements.yml contains phpinfo role entry"
+        node: control
+        command: "grep -q 'phpinfo' /home/vagrant/ansible/roles/requirements.yml"
+        expect_rc: 0
+
+      - id: "1.4"
+        description: "balancer role directory exists after installation"
+        node: control
+        command: "test -d /home/vagrant/ansible/roles/balancer || ansible-galaxy list 2>/dev/null | grep -q 'balancer'"
+        expect_rc: 0
+
+      - id: "1.5"
+        description: "phpinfo role directory exists after installation"
+        node: control
+        command: "test -d /home/vagrant/ansible/roles/phpinfo || ansible-galaxy list 2>/dev/null | grep -q 'phpinfo'"
+        expect_rc: 0
+
+  # ── Task 2: Use Galaxy Roles in a Playbook ──
+  - id: "2"
+    title: "Use Galaxy Roles in a Playbook"
+    points: 1
+    description: |
+      Once roles are installed, using them in a playbook is identical to using
+      your own custom roles. You reference them by the local alias name set in
+      requirements.yml — not the Galaxy name.
+
+      Create /home/vagrant/ansible/galaxy_playbook.yml that applies the balancer
+      role to the loadbalancers group and the phpinfo role to webservers:
+
+        ---
+        - name: Configure load balancers with HAProxy
+          hosts: loadbalancers
+          become: true
+          roles:
+            - balancer
+
+        - name: Configure web servers with PHP info page
+          hosts: webservers
+          become: true
+          roles:
+            - phpinfo
+
+      Note how we use 'balancer' and 'phpinfo' — the alias names from
+      requirements.yml — not 'geerlingguy.haproxy' or 'geerlingguy.php'.
+
+      Ansible resolves role names in this order:
+        1. roles/ directory next to the playbook
+        2. roles_path in ansible.cfg
+        3. ~/.ansible/roles
+        4. /etc/ansible/roles
+
+      Since we installed with -p roles/, the roles are in the project's roles/
+      directory and will be found automatically if ansible.cfg has the correct
+      roles_path.
+
+      Verify your ansible.cfg has roles_path configured:
+        cat /home/vagrant/ansible/ansible.cfg
+
+      You should see a line like:
+        roles_path = /home/vagrant/ansible/roles
+
+      Run a syntax check:
+        cd /home/vagrant/ansible
+        ansible-playbook --syntax-check galaxy_playbook.yml
+
+      Tip: Galaxy roles often require variables to be set before they will
+      work correctly. Check the role's README.md or defaults/main.yml:
+        cat roles/balancer/README.md
+        cat roles/balancer/defaults/main.yml
+      On the exam, the task description will tell you what variables to set.
+      Pass them using vars: in the play or using group_vars.
+
+      Tip: Syntax check is your best friend. Run it after every edit:
+        ansible-playbook --syntax-check galaxy_playbook.yml
+      It catches typos, indentation errors, and missing role names before
+      you waste time running against live hosts.
+    checks:
+      - id: "2.1"
+        description: "galaxy_playbook.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/galaxy_playbook.yml"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "galaxy_playbook.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check galaxy_playbook.yml"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "galaxy_playbook.yml references balancer role"
+        node: control
+        command: "grep -q 'balancer' /home/vagrant/ansible/galaxy_playbook.yml"
+        expect_rc: 0
+
+      - id: "2.4"
+        description: "galaxy_playbook.yml references phpinfo role"
+        node: control
+        command: "grep -q 'phpinfo' /home/vagrant/ansible/galaxy_playbook.yml"
+        expect_rc: 0
+
+      - id: "2.5"
+        description: "galaxy_playbook.yml targets loadbalancers group"
+        node: control
+        command: "grep -q 'loadbalancers' /home/vagrant/ansible/galaxy_playbook.yml"
+        expect_rc: 0
+
+  # ── Task 3: Create a Custom Role from Scratch ──
+  - id: "3"
+    title: "Create a Custom Role from Scratch"
+    points: 1
+    description: |
+      You may be asked to create a custom role, not just install one from Galaxy.
+      The workflow is always the same:
+
+        1. Scaffold with ansible-galaxy init
+        2. Write tasks/main.yml
+        3. Write templates/*.j2 (if needed)
+        4. Write handlers/main.yml (if using notify)
+        5. Write defaults/main.yml (for configurable variables)
+
+      Create a custom role called 'webapp':
+        cd /home/vagrant/ansible
+        ansible-galaxy init roles/webapp
+
+      Now write the role content. This role installs httpd, deploys a template,
+      and starts the service.
+
+      Write roles/webapp/tasks/main.yml:
+
+        ---
+        - name: Install httpd
+          ansible.builtin.dnf:
+            name: httpd
+            state: present
+
+        - name: Deploy web application template
+          ansible.builtin.template:
+            src: index.html.j2
+            dest: /var/www/html/index.html
+            owner: apache
+            group: apache
+            mode: '0644'
+          notify: Restart httpd
+
+        - name: Ensure httpd is started and enabled
+          ansible.builtin.service:
+            name: httpd
+            state: started
+            enabled: true
+
+      Write roles/webapp/templates/index.html.j2:
+
+        <!DOCTYPE html>
+        <html>
+        <head><title>Web Application</title></head>
+        <body>
+        <h1>{{ app_title }}</h1>
+        <p>Deployed by Ansible on {{ ansible_fqdn }}</p>
+        <p>Environment: {{ app_environment }}</p>
+        </body>
+        </html>
+
+      Write roles/webapp/handlers/main.yml:
+
+        ---
+        - name: Restart httpd
+          ansible.builtin.service:
+            name: httpd
+            state: restarted
+
+      Write roles/webapp/defaults/main.yml (configurable defaults):
+
+        ---
+        app_title: "My Web Application"
+        app_environment: "production"
+
+      Key points about defaults/main.yml:
+        - These variables can be overridden by inventory vars, group_vars,
+          playbook vars, or extra-vars (-e on the command line).
+        - They are the "published interface" of the role — the knobs users
+          can turn without editing the role itself.
+        - Never put sensitive data (passwords, keys) in defaults. Use vault.
+
+      Verify the role structure is complete:
+        find /home/vagrant/ansible/roles/webapp -type f | sort
+
+      Tip: ansible-galaxy init creates all the directories for you.
+      Do not manually mkdir — you will miss something. Always init first,
+      then edit the files it creates. The skeleton is your checklist.
+    checks:
+      - id: "3.1"
+        description: "roles/webapp directory exists on control"
+        node: control
+        command: "test -d /home/vagrant/ansible/roles/webapp"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "roles/webapp/tasks/main.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/roles/webapp/tasks/main.yml"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "roles/webapp/templates/index.html.j2 exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/roles/webapp/templates/index.html.j2"
+        expect_rc: 0
+
+      - id: "3.4"
+        description: "roles/webapp/handlers/main.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/roles/webapp/handlers/main.yml"
+        expect_rc: 0
+
+      - id: "3.5"
+        description: "roles/webapp/defaults/main.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/roles/webapp/defaults/main.yml"
+        expect_rc: 0
+
+      - id: "3.6"
+        description: "roles/webapp/tasks/main.yml installs httpd"
+        node: control
+        command: "grep -q 'httpd' /home/vagrant/ansible/roles/webapp/tasks/main.yml"
+        expect_rc: 0
+
+  # ── Task 4: Mixed Roles Playbook ──
+  - id: "4"
+    title: "Mixed Roles Playbook"
+    points: 1
+    description: |
+      Real-world playbooks commonly combine Galaxy roles and custom roles in
+      the same play or across plays in the same playbook. This is perfectly
+      valid — Ansible does not distinguish between role origins at runtime.
+
+      Create /home/vagrant/ansible/mixed_roles.yml that uses both the custom
+      webapp role and the installed Galaxy phpinfo role:
+
+        ---
+        - name: Deploy full web stack on webservers
+          hosts: webservers
+          become: true
+          vars:
+            app_title: "Ansible Study App"
+            app_environment: "lab"
+          roles:
+            - webapp
+            - phpinfo
+
+        - name: Configure load balancer
+          hosts: loadbalancers
+          become: true
+          roles:
+            - balancer
+
+      In the webservers play, two roles are applied in order:
+        1. webapp (custom role from Task 3) — installs httpd and deploys template
+        2. phpinfo (Galaxy role from Task 1) — adds PHP info page
+
+      The vars: section overrides the webapp role's defaults, demonstrating
+      how to pass configuration to a role at the play level.
+
+      Role execution order within a play follows the roles: list order. webapp
+      runs completely before phpinfo begins. If both roles define a handler with
+      the same name, only one handler executes (Ansible de-duplicates by name).
+
+      Run a syntax check:
+        cd /home/vagrant/ansible
+        ansible-playbook --syntax-check mixed_roles.yml
+
+      To also verify the role directory is resolved correctly, use --list-tasks:
+        ansible-playbook --list-tasks mixed_roles.yml
+
+      This shows every task that would run without executing them. It is a safe
+      way to confirm all roles are found and their tasks are loaded.
+
+      Tip: When a play applies multiple roles, always check that the roles
+      do not conflict. Two roles both trying to manage /var/www/html/index.html
+      will overwrite each other. The last role in the list wins.
+
+      Tip: Use pre_tasks: and post_tasks: around the roles: section when
+      you need setup or teardown logic that must run before/after ALL roles:
+        pre_tasks:
+          - name: Update package cache
+            ansible.builtin.dnf:
+              update_cache: true
+        roles:
+          - webapp
+        post_tasks:
+          - name: Verify deployment
+            ansible.builtin.uri:
+              url: http://localhost/
+    checks:
+      - id: "4.1"
+        description: "mixed_roles.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/mixed_roles.yml"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "mixed_roles.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check mixed_roles.yml"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "mixed_roles.yml references the custom webapp role"
+        node: control
+        command: "grep -q 'webapp' /home/vagrant/ansible/mixed_roles.yml"
+        expect_rc: 0
+
+      - id: "4.4"
+        description: "mixed_roles.yml references a Galaxy role (balancer or phpinfo)"
+        node: control
+        command: "grep -qE 'balancer|phpinfo' /home/vagrant/ansible/mixed_roles.yml"
+        expect_rc: 0

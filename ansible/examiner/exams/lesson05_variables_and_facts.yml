@@ -1,0 +1,372 @@
+---
+id: lesson05_variables_and_facts
+title: "Lesson 5: Variables & Facts"
+duration: 3600
+passing_score: 100
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node5:
+    hostname: node5.lab.local
+    ip: "192.168.56.24"
+    ssh_user: vagrant
+    groups: [workers]
+
+tasks:
+  # ── Task 1: Use Playbook Variables ──
+  - id: "1"
+    title: "Use Playbook Variables"
+    points: 1
+    description: |
+      PREREQUISITE: This lesson assumes /home/vagrant/ansible/ansible.cfg and
+      a working inventory file already exist on the control node, created during
+      lessons 01 and 02. All playbooks in this lesson should be written in
+      /home/vagrant/ansible/.
+
+      Variables are the core of reusable Ansible automation. Instead of
+      hardcoding values, you define them once and reference them throughout
+      your playbook using Jinja2 double-brace syntax: {{ variable_name }}.
+
+      The simplest place to define variables is in the vars: section of a play.
+      These variables are scoped to that play only and override inventory
+      variables and host facts.
+
+      Create the playbook /home/vagrant/ansible/vars_demo.yml with the
+      following structure:
+
+        ---
+        - name: Demonstrate playbook variables
+          hosts: lab
+          vars:
+            company_name: "Acme Corp"
+            contact_email: "admin@acme.example.com"
+          tasks:
+            - name: Display variables
+              ansible.builtin.debug:
+                msg: "Company: {{ company_name }}, Contact: {{ contact_email }}"
+
+            - name: Write company info to file
+              ansible.builtin.copy:
+                dest: /tmp/company-info.txt
+                content: |
+                  Company: {{ company_name }}
+                  Contact: {{ contact_email }}
+
+      The debug module is your best friend during development. It prints values
+      to the terminal during a playbook run without changing any system state.
+
+      Tip: Use register + debug to troubleshoot — inspect what a task
+      returns. This also applies to variables: if a variable is not expanding
+      the way you expect, add a debug task right after to see its current value.
+
+      Run the playbook with: ansible-playbook vars_demo.yml
+    checks:
+      - id: "1.1"
+        description: "vars_demo.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/vars_demo.yml"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "vars_demo.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/vars_demo.yml"
+        expect_rc: 0
+
+      - id: "1.3"
+        description: "/tmp/company-info.txt exists on node1"
+        node: node1
+        command: "test -f /tmp/company-info.txt"
+        expect_rc: 0
+
+  # ── Task 2: Use vars_files ──
+  - id: "2"
+    title: "Use vars_files"
+    points: 1
+    description: |
+      Embedding all variables in the vars: section of a play works for small
+      playbooks, but quickly becomes unwieldy. The vars_files: directive lets
+      you load variables from one or more external YAML files. This keeps your
+      playbooks clean and allows the same variable file to be reused across
+      multiple playbooks.
+
+      Step 1 — Create the variable file /home/vagrant/ansible/myvars.yml:
+
+        ---
+        app_name: "MyApp"
+        app_version: "2.0"
+
+      This is a plain YAML file containing key-value pairs. Ansible reads it
+      and makes every key available as a variable in the play.
+
+      Step 2 — Create the playbook /home/vagrant/ansible/vars_file_demo.yml:
+
+        ---
+        - name: Demonstrate vars_files
+          hosts: lab
+          vars_files:
+            - myvars.yml
+          tasks:
+            - name: Write app info to file
+              ansible.builtin.copy:
+                dest: /tmp/app-info.txt
+                content: |
+                  Application: {{ app_name }}
+                  Version: {{ app_version }}
+
+      vars_files paths are relative to the playbook directory. You can list
+      multiple files and they are loaded in order. If the same variable appears
+      in multiple files, the last file wins.
+
+      Pro Tip: In a timed assessment, you may have no internet. Use ansible-doc
+      and /usr/share/doc/ for reference. Run "ansible-doc ansible.builtin.copy"
+      to see all supported parameters and working examples without leaving the
+      terminal.
+
+      Run the playbook with: ansible-playbook vars_file_demo.yml
+    checks:
+      - id: "2.1"
+        description: "myvars.yml variable file exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/myvars.yml"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "vars_file_demo.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/vars_file_demo.yml"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "vars_file_demo.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/vars_file_demo.yml"
+        expect_rc: 0
+
+      - id: "2.4"
+        description: "/tmp/app-info.txt on node1 contains 'MyApp'"
+        node: node1
+        command: "grep 'MyApp' /tmp/app-info.txt"
+        expect_rc: 0
+
+  # ── Task 3: Explore Ansible Facts ──
+  - id: "3"
+    title: "Explore Ansible Facts"
+    points: 1
+    description: |
+      Ansible facts are variables that Ansible automatically discovers about
+      each managed host before the play runs. Facts describe the system's
+      hardware, OS, network interfaces, memory, disk layout, and much more.
+      They are gathered by the ansible.builtin.setup module, which runs
+      automatically at the start of every play (the "Gathering Facts" step
+      you see in playbook output).
+
+      To see ALL facts available on a host, run the setup module as an ad-hoc
+      command from the control node:
+        ansible node1 -m setup | less
+
+      That output can be overwhelming. You can filter it with a pattern:
+        ansible node1 -m setup -a "filter=ansible_mem*"
+        ansible node1 -m setup -a "filter=ansible_default_ipv4"
+
+      Key facts you should know:
+        - ansible_fqdn              — fully qualified domain name
+        - ansible_hostname          — short hostname
+        - ansible_default_ipv4.address — primary IPv4 address
+        - ansible_memtotal_mb       — total RAM in MB
+        - ansible_distribution      — OS family (e.g. AlmaLinux, Rocky)
+        - ansible_distribution_version — full version string
+        - ansible_os_family         — broader family (e.g. RedHat)
+        - ansible_interfaces        — list of network interfaces
+        - ansible_mounts            — list of mounted filesystems
+
+      Facts are accessed in playbooks exactly like variables: {{ ansible_fqdn }}
+
+      Create the playbook /home/vagrant/ansible/facts.yml:
+
+        ---
+        - name: Explore Ansible facts
+          hosts: lab
+          tasks:
+            - name: Display key system facts
+              ansible.builtin.debug:
+                msg:
+                  - "FQDN: {{ ansible_fqdn }}"
+                  - "IP: {{ ansible_default_ipv4.address }}"
+                  - "Memory (MB): {{ ansible_memtotal_mb }}"
+                  - "OS: {{ ansible_distribution }}"
+
+      Run it with: ansible-playbook facts.yml
+      Observe that each node shows its own values — facts are per-host.
+
+      Tip: Use ansible-doc <module> to see all parameters and examples.
+      For instance: ansible-doc ansible.builtin.setup shows fact_path, filter,
+      and gather_subset options that let you fine-tune what facts are collected.
+    checks:
+      - id: "3.1"
+        description: "facts.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/facts.yml"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "facts.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/facts.yml"
+        expect_rc: 0
+
+  # ── Task 4: Register and Debug ──
+  - id: "4"
+    title: "Register and Debug"
+    points: 1
+    description: |
+      The register: keyword captures the full return value of a task into a
+      variable. This is one of the most powerful techniques in Ansible because
+      it lets you make decisions based on what actually happened on the remote
+      host — not just whether the task succeeded or failed.
+
+      Every module returns a dictionary. The most important keys are:
+        - .rc        — return code (0 = success for command/shell tasks)
+        - .stdout    — standard output as a string
+        - .stderr    — standard error as a string
+        - .stdout_lines — stdout split into a list of lines
+        - .changed   — boolean: did this task change state?
+        - .failed    — boolean: did this task fail?
+
+      Create the playbook /home/vagrant/ansible/register_demo.yml:
+
+        ---
+        - name: Demonstrate register and debug
+          hosts: lab
+          tasks:
+            - name: Check if httpd is installed
+              ansible.builtin.command: rpm -q httpd
+              register: httpd_check
+              ignore_errors: true
+
+            - name: Show the return code
+              ansible.builtin.debug:
+                msg: "rc={{ httpd_check.rc }} stdout={{ httpd_check.stdout }}"
+
+      The ignore_errors: true directive is critical here. Without it, the play
+      would fail on hosts where httpd is not installed (rpm -q exits non-zero
+      when a package is missing). With it, the task is marked as failed but the
+      play continues and you can inspect the result.
+
+      Tip: Use register + debug to troubleshoot — inspect what a task
+      returns. This pattern is especially useful when a when: condition is not
+      triggering as expected. Register the value, debug it, and you will see
+      exactly what the condition is evaluating.
+
+      Run it with: ansible-playbook register_demo.yml -l node1
+      Look at the debug output. If httpd is installed, rc=0. If not, rc=1.
+    checks:
+      - id: "4.1"
+        description: "register_demo.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/register_demo.yml"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "register_demo.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/register_demo.yml"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "register_demo.yml uses the register keyword"
+        node: control
+        command: "grep -q 'register' /home/vagrant/ansible/register_demo.yml"
+        expect_rc: 0
+
+  # ── Task 5: Create a System Info File Using Facts ──
+  - id: "5"
+    title: "Create a System Info File Using Facts"
+    points: 1
+    description: |
+      Facts become truly useful when you use them to generate host-specific
+      content without any manual input. Because each node has its own facts,
+      the same playbook task produces different output on every host —
+      automatically customized to describe that exact system.
+
+      The ansible.builtin.copy module's content: parameter supports full
+      Jinja2 template syntax, including variable substitution. This is simpler
+      than a full template file when the content is not too complex.
+
+      Create the playbook /home/vagrant/ansible/system_info.yml:
+
+        ---
+        - name: Write system info using facts
+          hosts: lab
+          tasks:
+            - name: Create system info file
+              ansible.builtin.copy:
+                dest: /root/system-info.txt
+                content: |
+                  Hostname:     {{ ansible_hostname }}
+                  FQDN:         {{ ansible_fqdn }}
+                  IP Address:   {{ ansible_default_ipv4.address }}
+                  Memory (MB):  {{ ansible_memtotal_mb }}
+                  OS:           {{ ansible_distribution }} {{ ansible_distribution_version }}
+                  Kernel:       {{ ansible_kernel }}
+                mode: '0644'
+
+      Note that /root/ is owned by root. The vagrant user has passwordless sudo
+      so Ansible can write there using become: true. Add "become: true" either
+      at the play level (applies to all tasks) or on the individual task.
+
+      Tip: Templates use Jinja2 syntax: {{ var }}, {% for %}, {% if %}.
+      The content: parameter in copy uses the same Jinja2 engine as template
+      files — anything that works in a .j2 file works in content: too. For more
+      complex files with loops or conditionals, use the template module instead.
+
+      Run it with: ansible-playbook system_info.yml
+      Verify with: ansible lab -m command -a "cat /root/system-info.txt" -b
+    checks:
+      - id: "5.1"
+        description: "system_info.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/system_info.yml"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "system_info.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/system_info.yml"
+        expect_rc: 0
+
+      - id: "5.3"
+        description: "/root/system-info.txt exists on node1"
+        node: node1
+        command: "sudo test -f /root/system-info.txt"
+        expect_rc: 0
+
+      - id: "5.4"
+        description: "/root/system-info.txt on node1 contains the hostname"
+        node: node1
+        command: "sudo grep -qi 'node1' /root/system-info.txt"
+        expect_rc: 0

@@ -1,0 +1,564 @@
+---
+id: lesson16_user_accounts
+title: "Lesson 16: User Accounts with Vault"
+duration: 3600
+passing_score: 100
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [dev]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [test]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [prod, webservers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [prod, webservers]
+
+tasks:
+  # ── Task 1: Create Vault Password File and Encrypted Vars ──
+  - id: "1"
+    title: "Set Up Vault Password and Encrypted Variables"
+    points: 1
+    description: |
+      This lesson teaches a canonical Ansible pattern for user account
+      management: a vault-encrypted password file paired with a plain user
+      list, deployed selectively across environment groups. Master this
+      pattern — it combines vault, user management, and group filtering.
+
+      The inventory for this lesson uses named environment groups instead of
+      the generic lab/workers split from earlier lessons:
+        dev   — node1 (development hosts)
+        test  — node2 (test hosts)
+        prod  — node3, node4 (production hosts, also in webservers)
+
+      Your playbook will create developer users on dev and test hosts, and
+      manager users on prod hosts — using vault-encrypted passwords for both.
+
+      ─────────────────────────────────────────────────────────────────────
+      THE TASK
+      ─────────────────────────────────────────────────────────────────────
+
+      Step 1 — Create the vault password file:
+        echo 'p@ssw0rd42' > /home/vagrant/ansible/secret.txt
+        chmod 600 /home/vagrant/ansible/secret.txt
+
+      The password 'p@ssw0rd42' is what the task sheet specifies. Always
+      read the exact password carefully — it must match.
+
+      Step 2 — Create the encrypted variables file credentials.yml using the
+      ansible-vault create subcommand:
+        cd /home/vagrant/ansible
+        ansible-vault create credentials.yml --vault-password-file=secret.txt
+
+      Your editor opens. Type the following YAML content, then save and quit:
+        dev_pw: devSec#42
+        mgr_pw: mgrSec#42
+
+      These are the plaintext passwords that will be hashed when creating
+      users. The vault protects them from anyone who reads your playbook
+      repo without the password file.
+
+      Step 3 — Verify the file is encrypted:
+        head -1 /home/vagrant/ansible/credentials.yml
+        # Expected output: $ANSIBLE_VAULT;1.1;AES256
+
+      Step 4 — Add vault_password_file to your ansible.cfg under [defaults]:
+        [defaults]
+        inventory            = /home/vagrant/ansible/inventory
+        remote_user          = vagrant
+        host_key_checking    = False
+        vault_password_file  = /home/vagrant/ansible/secret.txt
+
+        [privilege_escalation]
+        become = True
+
+      With vault_password_file configured in ansible.cfg, every subsequent
+      ansible-playbook command automatically uses secret.txt for decryption.
+      You will never need to pass --vault-password-file again. This eliminates
+      a major source of command-line errors.
+
+      Pro Tip: The vault password filename varies by task — it has been called
+      vault_pass, secret.txt, and vault.txt. Always use the exact filename
+      specified in the task. Here we use secret.txt.
+
+      To verify credentials.yml decrypts correctly:
+        ansible-vault view credentials.yml --vault-password-file secret.txt
+        # Should show dev_pw and mgr_pw in plaintext
+    checks:
+      - id: "1.1"
+        description: "secret.txt vault password file exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/secret.txt"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "credentials.yml encrypted variables file exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/credentials.yml"
+        expect_rc: 0
+
+      - id: "1.3"
+        description: "credentials.yml is vault-encrypted (has ANSIBLE_VAULT header)"
+        node: control
+        command: "head -1 /home/vagrant/ansible/credentials.yml"
+        expect_stdout_contains: "$ANSIBLE_VAULT"
+
+      - id: "1.4"
+        description: "ansible.cfg has vault_password_file setting"
+        node: control
+        command: "grep -q 'vault_password_file' /home/vagrant/ansible/ansible.cfg"
+        expect_rc: 0
+
+  # ── Task 2: Create a User List Variable File ──
+  - id: "2"
+    title: "Create User List Variable File"
+    points: 1
+    description: |
+      The user list is stored in a PLAIN (unencrypted) YAML file. This is
+      intentional: the user list is not sensitive — it contains only names
+      and job roles, not passwords. Passwords live in the encrypted credentials.yml.
+      This separation is a best practice: encrypt what is secret, leave the
+      rest readable.
+
+      In practice, this file is often provided at a download URL and you
+      fetch it with curl or wget:
+        curl -o /home/vagrant/ansible/user_list.yml http://example.com/user_list.yml
+
+      Here you create it manually to practice the expected structure.
+
+      ─────────────────────────────────────────────────────────────────────
+      THE TASK
+      ─────────────────────────────────────────────────────────────────────
+
+      Create /home/vagrant/ansible/user_list.yml with the following content:
+
+        ---
+        users:
+          - name: anna
+            job: developer
+          - name: maria
+            job: manager
+          - name: carlos
+            job: developer
+          - name: dave
+            job: manager
+
+      Each user has two keys:
+        name — the Linux username that will be created
+        job  — the role that determines WHICH hosts the user lands on
+
+      Your playbook will loop over this list and use the job field in a
+      when: condition to filter which users to create on which host group.
+
+      The when condition pattern (preview for Task 3):
+        when: item.job == 'developer'
+
+      Combined with targeting the correct hosts: group in the play header,
+      this ensures developers only land on dev/test and managers only on prod.
+
+      Verify the file was created correctly:
+        cat /home/vagrant/ansible/user_list.yml
+        ansible-playbook --syntax-check /home/vagrant/ansible/users.yml
+        # (after creating users.yml in Task 3)
+    checks:
+      - id: "2.1"
+        description: "user_list.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/user_list.yml"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "user_list.yml contains anna"
+        node: control
+        command: "grep -q 'anna' /home/vagrant/ansible/user_list.yml"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "user_list.yml contains developer job role"
+        node: control
+        command: "grep -q 'developer' /home/vagrant/ansible/user_list.yml"
+        expect_rc: 0
+
+  # ── Task 3: Create Groups and Users Playbook ──
+  - id: "3"
+    title: "Create User Accounts Playbook"
+    points: 1
+    description: |
+      This is the core task. The playbook combines everything: vault-encrypted
+      passwords, a plain user list, supplementary group creation, and selective
+      user deployment using when: conditions tied to inventory group membership.
+
+      Understanding the when condition — this is a key Ansible pattern:
+
+        when: item.job == 'developer' and
+              (inventory_hostname in groups['dev'] or
+               inventory_hostname in groups['test'])
+
+      Breaking this down:
+        item.job == 'developer'
+          — Only process users whose job field is "developer"
+        inventory_hostname in groups['dev']
+          — This host is in the dev group
+        inventory_hostname in groups['test']
+          — This host is in the test group
+
+      The and/or logic means: "if the current loop item is a developer AND
+      the current host is in dev or test, create the user". For a manager
+      running on a dev host, item.job == 'manager' is false, so the task
+      is skipped. For a developer running on a prod host, neither group
+      condition is true, so it is also skipped. Only the right combination
+      creates the user.
+
+      Why run on all hosts instead of targeting groups separately?
+      The play targets all hosts (or you can use separate plays per group).
+      The when: condition handles the filtering. Either approach works —
+      two separate plays (one for dev/test, one for prod) is often cleaner
+      and easier to reason about.
+
+      ─────────────────────────────────────────────────────────────────────
+      THE TASK
+      ─────────────────────────────────────────────────────────────────────
+
+      Create /home/vagrant/ansible/users.yml:
+
+        ---
+        - name: Create developer groups and users on dev and test hosts
+          hosts: dev,test
+          vars_files:
+            - /home/vagrant/ansible/credentials.yml
+            - /home/vagrant/ansible/user_list.yml
+          tasks:
+            - name: Create appdev supplementary group
+              ansible.builtin.group:
+                name: appdev
+                state: present
+
+            - name: Create developer users
+              ansible.builtin.user:
+                name: "{{ item.name }}"
+                password: "{{ dev_pw | password_hash('sha512') }}"
+                groups: appdev
+                state: present
+              loop: "{{ users }}"
+              when: item.job == 'developer'
+
+        - name: Create manager groups and users on prod hosts
+          hosts: prod
+          vars_files:
+            - /home/vagrant/ansible/credentials.yml
+            - /home/vagrant/ansible/user_list.yml
+          tasks:
+            - name: Create appmgr supplementary group
+              ansible.builtin.group:
+                name: appmgr
+                state: present
+
+            - name: Create manager users
+              ansible.builtin.user:
+                name: "{{ item.name }}"
+                password: "{{ mgr_pw | password_hash('sha512') }}"
+                groups: appmgr
+                state: present
+              loop: "{{ users }}"
+              when: item.job == 'manager'
+
+      Key points about this playbook structure:
+
+      vars_files: — loads BOTH files in the same list. Ansible detects the
+      $ANSIBLE_VAULT header in credentials.yml and decrypts it automatically.
+      user_list.yml is plain and loaded as-is. Both sets of variables are
+      available in the play's scope after loading.
+
+      password_hash('sha512') — the password_hash Jinja2 filter converts the
+      plaintext dev_pw string from the vault into a crypt(3) SHA-512 hash
+      that Linux writes to /etc/shadow. NEVER pass a plaintext string to
+      password: — Linux will accept it but authentication will fail because
+      the stored value will not match what PAM expects.
+
+      groups: appdev — adds the user to appdev as a SUPPLEMENTARY group.
+      The user's primary group is still their own private group (created
+      automatically). Use append: true if you want to add without removing
+      existing supplementary groups. Here state: present with groups: sets
+      them directly, which is fine for new users.
+
+      Syntax check before running:
+        cd /home/vagrant/ansible && ansible-playbook --syntax-check users.yml
+
+      Run the playbook:
+        cd /home/vagrant/ansible && ansible-playbook users.yml
+
+      Because vault_password_file is set in ansible.cfg, no extra flags needed.
+
+      Pro Tip: Always run --syntax-check before ansible-playbook. A syntax
+      error costs you the task AND the time to debug it. The syntax check takes
+      2 seconds and catches YAML indentation errors, undefined variables in
+      loop: and when: keys, and typos in module names.
+    checks:
+      - id: "3.1"
+        description: "users.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/users.yml"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "users.yml passes syntax check (vault password from ansible.cfg)"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check users.yml"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "appdev group exists on node1 (dev host)"
+        node: node1
+        command: "getent group appdev"
+        expect_rc: 0
+
+      - id: "3.4"
+        description: "user anna exists on node1 (dev host, developer)"
+        node: node1
+        command: "id anna"
+        expect_rc: 0
+
+      - id: "3.5"
+        description: "appmgr group exists on node3 (prod host)"
+        node: node3
+        command: "getent group appmgr"
+        expect_rc: 0
+
+      - id: "3.6"
+        description: "user maria exists on node3 (prod host, manager)"
+        node: node3
+        command: "id maria"
+        expect_rc: 0
+
+  # ── Task 4: Verify User Passwords Work ──
+  - id: "4"
+    title: "Verify User Configuration"
+    points: 1
+    description: |
+      Verification is worth separate points and is good practice in any case.
+      Before marking a task done, confirm that the state you intended is
+      actually present on the managed nodes.
+
+      The fastest verification approach is ad-hoc commands. These do not
+      require writing a playbook and give immediate output:
+
+        # Verify developer users exist on dev and test hosts
+        ansible dev,test -m command -a 'id anna'
+        ansible dev,test -m command -a 'id carlos'
+
+        # Verify manager users exist on prod hosts
+        ansible prod -m command -a 'id maria'
+        ansible prod -m command -a 'id dave'
+
+        # Verify supplementary groups exist
+        ansible dev -m command -a 'getent group appdev'
+        ansible prod -m command -a 'getent group appmgr'
+
+        # Verify anna is IN the appdev group (checks supplementary membership)
+        ansible dev -m command -a 'id anna'
+        # id output shows: uid=... gid=... groups=...,appdev
+
+      The id command output format is:
+        uid=1001(anna) gid=1001(anna) groups=1001(anna),1002(appdev)
+
+      The groups= field lists all groups (primary and supplementary). If appdev
+      appears there, the supplementary group assignment worked correctly.
+
+      ─────────────────────────────────────────────────────────────────────
+      THE TASK
+      ─────────────────────────────────────────────────────────────────────
+
+      Create /home/vagrant/ansible/verify_users.yml:
+
+        ---
+        - name: Verify developer users on dev and test hosts
+          hosts: dev,test
+          tasks:
+            - name: Check developer users exist and are in appdev group
+              ansible.builtin.command: "id {{ item }}"
+              loop:
+                - anna
+                - carlos
+              register: dev_user_check
+
+            - name: Verify appdev group exists
+              ansible.builtin.command: "getent group appdev"
+
+        - name: Verify manager users on prod hosts
+          hosts: prod
+          tasks:
+            - name: Check manager users exist and are in appmgr group
+              ansible.builtin.command: "id {{ item }}"
+              loop:
+                - maria
+                - dave
+              register: prod_user_check
+
+            - name: Verify appmgr group exists
+              ansible.builtin.command: "getent group appmgr"
+
+      Run it:
+        cd /home/vagrant/ansible && ansible-playbook verify_users.yml
+
+      The playbook will FAIL if any user is missing, which is exactly what
+      you want — a failing verification tells you something went wrong in
+      the users.yml run and you need to fix and re-run it.
+
+      Also verify isolation — developers should NOT exist on prod hosts:
+        ansible prod -m command -a 'id anna'
+        # Expected: exit code 1, "no such user"
+
+      And managers should NOT exist on dev/test hosts:
+        ansible dev,test -m command -a 'id maria'
+        # Expected: exit code 1, "no such user"
+
+      This isolation is enforced by the when: condition in users.yml. If both
+      users appear everywhere, check that your when: condition references the
+      correct group names and that your inventory has the groups defined.
+
+      Tip: Store vault password in a file and set vault_password_file in
+      ansible.cfg — verification playbooks that load vars_files also benefit.
+      If vault_password_file is not set, your verify playbook will prompt
+      interactively or fail non-interactively, costing you time.
+    checks:
+      - id: "4.1"
+        description: "anna is in the appdev group on node1"
+        node: node1
+        command: "id anna | grep -q appdev"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "carlos exists on node2 (test host)"
+        node: node2
+        command: "id carlos"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "maria is in the appmgr group on node3"
+        node: node3
+        command: "id maria | grep -q appmgr"
+        expect_rc: 0
+
+      - id: "4.4"
+        description: "dave exists on node4 (prod host)"
+        node: node4
+        command: "id dave"
+        expect_rc: 0
+
+      - id: "4.5"
+        description: "anna does NOT exist on node3 (prod host — isolation check)"
+        node: node3
+        command: "id anna 2>/dev/null"
+        expect_rc: 1
+
+  # ── Task 5: Remove Users with state: absent ──
+  - id: "5"
+    title: "Remove Users with state: absent"
+    points: 1
+    description: |
+      The ansible.builtin.user module is fully reversible. Setting state: absent
+      removes the user account. Adding remove: true also deletes the user's home
+      directory and mail spool — without it, only the account entry is removed but
+      the home directory stays on disk.
+
+      User removal is a common task framed as "decommission these accounts"
+      or "ensure these users are absent". The pattern is identical to creation,
+      just with state: absent replacing state: present.
+
+      remove: true — maps to userdel --remove. Without it, the home directory
+      (/home/anna) remains on disk even after the account is gone, which is
+      usually not what you want in a cleanup scenario.
+
+      force: true — maps to userdel --force. Removes the user even if they are
+      currently logged in, and removes files owned by the user even if outside
+      their home directory. Use with caution on live systems. In a lab
+      environment it is safe to use since no real users are logged in.
+
+      ─────────────────────────────────────────────────────────────────────
+      THE TASK
+      ─────────────────────────────────────────────────────────────────────
+
+      Create /home/vagrant/ansible/remove_users.yml:
+
+        ---
+        - name: Remove all users from user_list on dev and test hosts
+          hosts: dev,test
+          vars_files:
+            - /home/vagrant/ansible/user_list.yml
+          tasks:
+            - name: Remove all listed users
+              ansible.builtin.user:
+                name: "{{ item.name }}"
+                state: absent
+                remove: true
+              loop: "{{ users }}"
+
+        - name: Remove all users from user_list on prod hosts
+          hosts: prod
+          vars_files:
+            - /home/vagrant/ansible/user_list.yml
+          tasks:
+            - name: Remove all listed users
+              ansible.builtin.user:
+                name: "{{ item.name }}"
+                state: absent
+                remove: true
+              loop: "{{ users }}"
+
+      Notice that credentials.yml is NOT needed here — removal only requires the
+      user names from user_list.yml, not any passwords. Only vars_files that
+      are actually used need to be loaded.
+
+      Syntax check:
+        cd /home/vagrant/ansible && ansible-playbook --syntax-check remove_users.yml
+
+      Run it:
+        cd /home/vagrant/ansible && ansible-playbook remove_users.yml
+
+      After running, verify users are gone:
+        ansible dev,test -m command -a 'id anna'
+        # Expected: exit code 1, "no such user"
+
+        ansible prod -m command -a 'id maria'
+        # Expected: exit code 1, "no such user"
+
+      Tip: If a task says "remove user X" and also says "ensure their home
+      directory is removed", you MUST include remove: true. If it only says
+      "remove the account" without mentioning the home directory, remove: true
+      is still good practice but may not be strictly required for full credit.
+      When in doubt, include it — it does not hurt if there is no home directory
+      to remove, the task simply reports no change.
+
+      Tip: Partial credit IS given. Complete what you can, never leave a
+      task blank. If you create the playbook with correct structure but do not
+      have time to run it, you still earn points for the file existing and
+      passing the syntax check.
+    checks:
+      - id: "5.1"
+        description: "remove_users.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/remove_users.yml"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "remove_users.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check remove_users.yml"
+        expect_rc: 0

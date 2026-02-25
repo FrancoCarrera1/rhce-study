@@ -1,0 +1,441 @@
+---
+id: lesson08_users_groups_services
+title: "Lesson 8: Users, Groups & Services"
+duration: 3600
+passing_score: 100
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node5:
+    hostname: node5.lab.local
+    ip: "192.168.56.24"
+    ssh_user: vagrant
+    groups: [workers]
+
+tasks:
+  # ── Task 1: Create Groups ──
+  - id: "1"
+    title: "Create Groups"
+    points: 1
+    description: |
+      PREREQUISITE: This lesson assumes /home/vagrant/ansible/ansible.cfg and
+      a working inventory file already exist on the control node, created during
+      lessons 01 and 02. All playbooks should be written in /home/vagrant/ansible/.
+
+      The ansible.builtin.group module manages UNIX groups on managed nodes. It
+      is idempotent: running it when the group already exists makes no changes.
+      The module wraps the groupadd / groupmod / groupdel commands but handles
+      all the logic for you, including checking if the group exists first.
+
+      Key parameters:
+        name:   — the group name (required)
+        gid:    — numeric group ID (optional but useful for consistency)
+        state:  — present (default) or absent
+        system: — true/false, creates a system group (GID < 1000)
+
+      Tip: Use ansible-doc <module> to see all parameters and examples.
+      Run "ansible-doc ansible.builtin.group" to see every supported parameter,
+      including local: (use local groups only, ignoring LDAP/NIS) which can
+      be relevant in enterprise exam environments.
+
+      Create the playbook /home/vagrant/ansible/groups.yml:
+
+        ---
+        - name: Create system groups on all lab hosts
+          hosts: lab
+          become: true
+          tasks:
+            - name: Create developers group
+              ansible.builtin.group:
+                name: developers
+                gid: 3000
+                state: present
+
+            - name: Create operations group
+              ansible.builtin.group:
+                name: operations
+                gid: 3001
+                state: present
+
+      Pinning a specific GID with gid: is good practice in environments with
+      multiple servers — it ensures the numeric ID is consistent across all
+      nodes, which matters for NFS mounts where file ownership is GID-based.
+
+      Run it with: ansible-playbook groups.yml
+      Verify: ansible lab -m command -a "getent group developers"
+    checks:
+      - id: "1.1"
+        description: "groups.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/groups.yml"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "groups.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/groups.yml"
+        expect_rc: 0
+
+      - id: "1.3"
+        description: "developers group exists on node1"
+        node: node1
+        command: "getent group developers"
+        expect_rc: 0
+
+      - id: "1.4"
+        description: "operations group exists on node1"
+        node: node1
+        command: "getent group operations"
+        expect_rc: 0
+
+  # ── Task 2: Create Users with Passwords ──
+  - id: "2"
+    title: "Create Users with Passwords"
+    points: 1
+    description: |
+      The ansible.builtin.user module creates and manages user accounts. One
+      important rule: the password: parameter expects a HASHED password string,
+      not a plain-text password. Ansible provides the password_hash() filter to
+      generate hashes on the fly inside the playbook.
+
+      The syntax for hashing a password at playbook render time:
+
+        password: "{{ 'redhat' | password_hash('sha512') }}"
+
+      This uses a Jinja2 filter (the pipe | character passes the string to the
+      filter function). password_hash('sha512') returns a valid /etc/shadow
+      hash string that the user module writes directly to the shadow file.
+
+      WARNING: Do not store plain-text passwords in playbooks checked into
+      version control. For production use, store passwords in Ansible Vault.
+      The password_hash filter approach is the recommended method — you will
+      see it on tasks involving user creation.
+
+      Create the playbook /home/vagrant/ansible/create_users.yml:
+
+        ---
+        - name: Create webadmin user on all lab hosts
+          hosts: lab
+          become: true
+          tasks:
+            - name: Create webadmin user
+              ansible.builtin.user:
+                name: webadmin
+                group: developers
+                password: "{{ 'redhat' | password_hash('sha512') }}"
+                shell: /bin/bash
+                create_home: true
+                state: present
+
+      Key user module parameters:
+        name:        — username (required)
+        uid:         — numeric UID
+        group:       — primary group (name or GID)
+        groups:      — list of supplementary groups
+        append:      — true = add to groups without removing existing memberships
+        shell:       — login shell
+        home:        — home directory path
+        create_home: — create home directory (default true)
+        password:    — hashed password string
+        state:       — present or absent
+
+      Tip: Use ansible-doc <module> to see all parameters and examples.
+      "ansible-doc ansible.builtin.user" shows all parameters including
+      password_expire_max and comment (GECOS field).
+
+      Run it with: ansible-playbook create_users.yml
+      Verify: ansible node1 -m command -a "id webadmin"
+    checks:
+      - id: "2.1"
+        description: "create_users.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/create_users.yml"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "create_users.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/create_users.yml"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "user webadmin exists on node1"
+        node: node1
+        command: "id webadmin"
+        expect_rc: 0
+
+      - id: "2.4"
+        description: "webadmin has /bin/bash shell on node1"
+        node: node1
+        command: "getent passwd webadmin"
+        expect_rc: 0
+        expect_stdout_contains: "/bin/bash"
+
+  # ── Task 3: Manage Services ──
+  - id: "3"
+    title: "Manage Services"
+    points: 1
+    description: |
+      Service management is a core Ansible skill. Ansible provides two
+      modules for this: ansible.builtin.service and ansible.builtin.systemd.
+
+      ansible.builtin.service — generic, works with any init system (systemd,
+      SysV, upstart). Use this when you want portability.
+
+      ansible.builtin.systemd — systemd-specific, supports additional features:
+        daemon_reload: true  — equivalent to "systemctl daemon-reload"
+        masked:              — mask/unmask units
+        scope:               — system vs user scope
+
+      For RHEL/AlmaLinux systems (which use systemd exclusively), either module
+      works. The exam typically expects you to use service unless daemon_reload
+      is required.
+
+      Key service module parameters:
+        name:    — service name as known to systemctl
+        state:   — started, stopped, restarted, reloaded
+        enabled: — true/false (equivalent to systemctl enable/disable)
+
+      Create the playbook /home/vagrant/ansible/services.yml:
+
+        ---
+        - name: Install and manage services
+          hosts: lab
+          become: true
+          tasks:
+            - name: Install httpd on webservers
+              ansible.builtin.dnf:
+                name: httpd
+                state: present
+              when: inventory_hostname in groups['webservers']
+
+            - name: Start and enable httpd on webservers
+              ansible.builtin.service:
+                name: httpd
+                state: started
+                enabled: true
+              when: inventory_hostname in groups['webservers']
+
+            - name: Install firewalld on all lab hosts
+              ansible.builtin.dnf:
+                name: firewalld
+                state: present
+
+            - name: Start and enable firewalld on all lab hosts
+              ansible.builtin.service:
+                name: firewalld
+                state: started
+                enabled: true
+
+      Note that state: started and enabled: true are independent. state: started
+      affects the current runtime state (is it running right now?). enabled: true
+      affects whether it starts on boot. Always set both for services you want
+      persistently running.
+
+      Tip: Use ansible-doc <module> to see all parameters and examples.
+      Run "ansible-doc ansible.builtin.systemd" to see daemon_reload and other
+      systemd-specific options.
+
+      Run it with: ansible-playbook services.yml
+    checks:
+      - id: "3.1"
+        description: "services.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/services.yml"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "services.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/services.yml"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "httpd service is active on node1"
+        node: node1
+        command: "systemctl is-active httpd"
+        expect_rc: 0
+        expect_stdout: "active"
+
+      - id: "3.4"
+        description: "httpd service is enabled on node1"
+        node: node1
+        command: "systemctl is-enabled httpd"
+        expect_rc: 0
+        expect_stdout: "enabled"
+
+  # ── Task 4: Configure Firewall Rules ──
+  - id: "4"
+    title: "Configure Firewall Rules"
+    points: 1
+    description: |
+      The ansible.posix.firewalld module manages firewalld rules declaratively.
+      It is part of the ansible.posix collection, which is separate from
+      ansible-core. This collection is commonly pre-installed.
+      In your own lab, install it first:
+        ansible-galaxy collection install ansible.posix
+
+      The module replaces running firewall-cmd commands manually. Key parameters:
+
+        service:   — a named service (http, https, ssh, mysql, etc.)
+        port:      — a port/protocol pair (8080/tcp)
+        zone:      — firewalld zone (default: public)
+        state:     — enabled or disabled
+        permanent: — true = write to persistent config (survives reboot)
+        immediate: — true = apply to the running firewall right now
+
+      IMPORTANT: You almost always want BOTH permanent: true AND immediate: true.
+        - permanent: true alone — rule is saved but NOT active until reboot
+        - immediate: true alone — rule is active now but LOST after reboot
+        - Both — rule is active now AND persists after reboot
+
+      Create the playbook /home/vagrant/ansible/firewall.yml:
+
+        ---
+        - name: Open web ports in firewall on webservers
+          hosts: webservers
+          become: true
+          tasks:
+            - name: Allow HTTP service
+              ansible.posix.firewalld:
+                service: http
+                zone: public
+                state: enabled
+                permanent: true
+                immediate: true
+
+            - name: Allow HTTPS service
+              ansible.posix.firewalld:
+                service: https
+                zone: public
+                state: enabled
+                permanent: true
+                immediate: true
+
+      Pro Tip: In a timed assessment, you have no internet. Use ansible-doc and
+      /usr/share/doc/ for reference. Run "ansible-doc ansible.posix.firewalld"
+      to see all parameters. If the module is not found, check that the
+      ansible.posix collection is installed: ansible-galaxy collection list
+
+      Run it with: ansible-playbook firewall.yml
+      Verify: ansible node1 -m command -a "firewall-cmd --list-services" -b
+    checks:
+      - id: "4.1"
+        description: "firewall.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/firewall.yml"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "firewall.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/firewall.yml"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "http service is allowed in firewall on node1"
+        node: node1
+        command: "sudo firewall-cmd --list-services"
+        expect_rc: 0
+        expect_stdout_contains: "http"
+
+  # ── Task 5: Create a Cron Job ──
+  - id: "5"
+    title: "Create a Cron Job"
+    points: 1
+    description: |
+      The ansible.builtin.cron module manages crontab entries on managed hosts.
+      It is idempotent because it uses the name: parameter as a unique key —
+      Ansible tags each managed entry with a comment in the crontab, and uses
+      that tag to find and update existing entries rather than creating duplicates.
+
+      Schedule parameters mirror standard cron fields:
+        minute:  — 0-59, or */10 for every 10 minutes (default: *)
+        hour:    — 0-23 (default: *)
+        day:     — 1-31 (default: *)
+        month:   — 1-12 (default: *)
+        weekday: — 0-6, Sunday=0 (default: *)
+
+      Additional parameters:
+        user:    — whose crontab to manage (requires become: true)
+        job:     — the command to run
+        name:    — unique identifier for this entry (REQUIRED for idempotency)
+        state:   — present (default) or absent (to remove the entry)
+        special_time: — @reboot, @hourly, @daily, @weekly, @monthly (replaces all schedule fields)
+
+      Create the playbook /home/vagrant/ansible/cron.yml:
+
+        ---
+        - name: Create heartbeat cron job on all lab hosts
+          hosts: lab
+          become: true
+          tasks:
+            - name: Create ansible heartbeat cron job
+              ansible.builtin.cron:
+                name: ansible_heartbeat
+                user: vagrant
+                minute: "*/10"
+                hour: "*"
+                day: "*"
+                month: "*"
+                weekday: "*"
+                job: 'logger "Ansible heartbeat"'
+                state: present
+
+      The logger command writes a message to the system journal (syslog). This
+      cron job runs every 10 minutes and creates a journal entry, which is a
+      simple way to verify cron is working: journalctl | grep "Ansible heartbeat"
+
+      Tip: Use ansible-doc <module> to see all parameters and examples.
+      "ansible-doc ansible.builtin.cron" shows special_time, env (set
+      environment variables in the crontab), and disabled (comment out entries
+      without removing them) — all useful exam parameters.
+
+      To remove a cron job, set state: absent (Ansible finds it by name:).
+      Never manually edit crontab on managed nodes — let Ansible manage it.
+
+      Run it with: ansible-playbook cron.yml
+      Verify: ansible lab -m command -a "crontab -l -u vagrant"
+    checks:
+      - id: "5.1"
+        description: "cron.yml playbook exists on the control node"
+        node: control
+        command: "test -f /home/vagrant/ansible/cron.yml"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "cron.yml passes syntax check"
+        node: control
+        command: "ansible-playbook --syntax-check /home/vagrant/ansible/cron.yml"
+        expect_rc: 0
+
+      - id: "5.3"
+        description: "vagrant crontab on node1 contains the logger command"
+        node: node1
+        command: "crontab -l"
+        expect_rc: 0
+        expect_stdout_contains: "logger"

@@ -1,0 +1,412 @@
+---
+id: lesson11_collections_and_system_roles
+title: "Lesson 11: Collections & System Roles"
+duration: 3600
+passing_score: 100
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [workers, webservers]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [workers, dbservers]
+  node5:
+    hostname: node5.lab.local
+    ip: "192.168.56.24"
+    ssh_user: vagrant
+    groups: [workers]
+
+tasks:
+  # ── Task 1: Install Ansible Collections ──
+  - id: "1"
+    title: "Install Ansible Collections"
+    points: 1
+    description: |
+      Collections are the modern packaging format for Ansible content. A
+      collection bundles together:
+        - Modules (the building blocks you use in tasks)
+        - Plugins (lookup, filter, callback, connection plugins)
+        - Roles
+        - Playbooks
+        - Documentation
+
+      Collections use a namespace.collection_name format:
+        ansible.builtin   — Core modules shipped with ansible-core
+        ansible.posix     — POSIX-specific modules (seboolean, synchronize, etc.)
+        community.general — General-purpose community modules
+        fedora.linux_system_roles — System roles for RHEL/Fedora configuration
+
+      Fully Qualified Collection Names (FQCNs) uniquely identify a module:
+        ansible.posix.seboolean      — The seboolean module in ansible.posix
+        community.general.parted     — The parted module in community.general
+
+      On the exam you MUST use FQCNs in tasks. Short names (seboolean) still
+      work but may refer to the wrong module if multiple collections are installed.
+
+      Tip: Install collections with ansible-galaxy collection install
+      <name> -p collections/ — the -p flag installs to your project directory
+      instead of ~/.ansible/collections. This keeps your project self-contained.
+
+      Also add the collections path to ansible.cfg:
+        [defaults]
+        collections_path = /home/vagrant/ansible/collections
+
+      Step-by-step:
+        mkdir -p /home/vagrant/ansible/collections
+
+        ansible-galaxy collection install ansible.posix \
+          -p /home/vagrant/ansible/collections
+
+        ansible-galaxy collection install fedora.linux_system_roles \
+          -p /home/vagrant/ansible/collections
+
+      Verify installation:
+        ansible-galaxy collection list --collections-path /home/vagrant/ansible/collections
+
+      The collection is installed at:
+        collections/ansible_collections/<namespace>/<name>/
+
+      So ansible.posix ends up at:
+        collections/ansible_collections/ansible/posix/
+
+      And fedora.linux_system_roles ends up at:
+        collections/ansible_collections/fedora/linux_system_roles/
+    checks:
+      - id: "1.1"
+        description: "collections directory exists on control"
+        node: control
+        command: "test -d /home/vagrant/ansible/collections"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "ansible.posix collection is installed"
+        node: control
+        command: "test -d /home/vagrant/ansible/collections/ansible_collections/ansible/posix"
+        expect_rc: 0
+
+      - id: "1.3"
+        description: "fedora.linux_system_roles collection is installed"
+        node: control
+        command: "test -d /home/vagrant/ansible/collections/ansible_collections/fedora/linux_system_roles"
+        expect_rc: 0
+
+  # ── Task 2: Use a Collection Module ──
+  - id: "2"
+    title: "Use a Collection Module"
+    points: 1
+    description: |
+      Now that ansible.posix is installed, you can use its modules in playbooks.
+      The key is to use the FQCN in your task's module field.
+
+      The ansible.posix.seboolean module manages SELinux booleans. SELinux
+      booleans are on/off switches that control SELinux policy behaviour without
+      needing to write custom policy modules. For example:
+        httpd_can_network_connect — allows httpd to make outbound connections
+        httpd_can_sendmail        — allows httpd to send email
+        allow_ftpd_full_access    — allows FTP daemon full access
+
+      Create /home/vagrant/ansible/selinux_bool.yml:
+
+        ---
+        - name: Set SELinux boolean for httpd network connect on webservers
+          hosts: webservers
+          tasks:
+            - name: Enable httpd_can_network_connect boolean
+              ansible.posix.seboolean:
+                name: httpd_can_network_connect
+                state: true
+                persistent: true
+
+      Key parameters:
+        name:       — The SELinux boolean name
+        state:      — true (on) or false (off)
+        persistent: — true makes the change survive reboots (writes to policy)
+                      false is runtime-only (reverts on reboot)
+
+      Run the playbook:
+        cd /home/vagrant/ansible
+        ansible-playbook selinux_bool.yml
+
+      Verify the boolean is enabled on node1:
+        ssh vagrant@node1.lab.local sudo getsebool httpd_can_network_connect
+        # Expected: httpd_can_network_connect --> on
+
+      The getsebool command shows current and persistent state. The setsebool
+      equivalent (manual): sudo setsebool -P httpd_can_network_connect on
+        (-P makes it persistent)
+
+      Tip: On the exam, read ALL tasks first. Some build on each other.
+      This task requires SELinux to be in enforcing mode (not disabled). If
+      SELinux is disabled, the boolean cannot be set. The selinux system role
+      (Task 4) can enable it — plan your task order accordingly.
+    checks:
+      - id: "2.1"
+        description: "selinux_bool.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/selinux_bool.yml"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "selinux_bool.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check selinux_bool.yml"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "httpd_can_network_connect boolean is on on node1"
+        node: node1
+        command: "sudo getsebool httpd_can_network_connect"
+        expect_stdout_contains: "on"
+
+  # ── Task 3: Use the timesync System Role ──
+  - id: "3"
+    title: "Use the timesync System Role"
+    points: 1
+    description: |
+      RHEL System Roles are a collection of pre-built, Red Hat-supported Ansible
+      roles for configuring core RHEL subsystems. They are critical for Ansible
+      automation — expect at least one system role task.
+
+      Available system roles include:
+        timesync    — Configure chrony/ntpd for NTP time synchronisation
+        selinux     — Manage SELinux state and policies
+        network     — Configure network interfaces and connections
+        storage     — Manage disks, partitions, LVM, filesystems
+        firewall    — Configure firewalld rules
+        kdump       — Configure kernel crash dump
+        certificate — Request and manage TLS certificates
+
+      Tip: System role docs are at /usr/share/doc/rhel-system-roles/ —
+      copy their examples! Each role has a README.md explaining every variable
+      and an example playbook you can copy and modify. On the exam, reading
+      these docs is faster than memorising every variable name.
+
+        ls /usr/share/doc/rhel-system-roles/
+        cat /usr/share/doc/rhel-system-roles/timesync/README.md
+        cat /usr/share/doc/rhel-system-roles/timesync/example-timesync-playbook.yml
+
+      The fedora.linux_system_roles collection includes timesync. You can use
+      it as fedora.linux_system_roles.timesync OR copy the roles out:
+
+        cp -r /home/vagrant/ansible/collections/ansible_collections/fedora/linux_system_roles/roles/* \
+          /home/vagrant/ansible/roles/
+
+      Create /home/vagrant/ansible/timesync.yml:
+
+        ---
+        - name: Configure NTP timesync on all lab hosts
+          hosts: lab
+          vars:
+            timesync_ntp_servers:
+              - hostname: pool.ntp.org
+                iburst: true
+          roles:
+            - fedora.linux_system_roles.timesync
+
+      Key variables for timesync:
+        timesync_ntp_servers:     — List of NTP server objects
+          - hostname:             — Server hostname or IP
+            iburst:               — Send burst of packets on startup (faster sync)
+            prefer:               — Mark as preferred server
+        timesync_ntp_provider:    — 'chrony' (default on RHEL 8/9) or 'ntp'
+
+      After running, verify:
+        systemctl is-active chronyd   — Service should be active
+        chronyc tracking              — Shows current sync status
+        sudo grep pool.ntp.org /etc/chrony.conf
+
+      Run the playbook:
+        cd /home/vagrant/ansible
+        ansible-playbook timesync.yml
+    checks:
+      - id: "3.1"
+        description: "timesync.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/timesync.yml"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "timesync.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check timesync.yml"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "chronyd is active on node1"
+        node: node1
+        command: "systemctl is-active chronyd"
+        expect_stdout: "active"
+
+      - id: "3.4"
+        description: "pool.ntp.org is in chrony.conf on node1"
+        node: node1
+        command: "sudo grep -q 'pool.ntp.org' /etc/chrony.conf"
+        expect_rc: 0
+
+  # ── Task 4: Use the selinux System Role ──
+  - id: "4"
+    title: "Use the selinux System Role"
+    points: 1
+    description: |
+      The selinux system role manages SELinux policy state across your fleet.
+      Manually changing SELinux from disabled to enforcing requires a reboot
+      (for relabelling). The system role handles this reboot automatically
+      using the reboot_ok variable.
+
+      Tip: System role docs are at /usr/share/doc/rhel-system-roles/ —
+      copy their examples! For the selinux role:
+        cat /usr/share/doc/rhel-system-roles/selinux/README.md
+        cat /usr/share/doc/rhel-system-roles/selinux/example-selinux-playbook.yml
+
+      Key selinux role variables:
+        selinux_state:         — 'enforcing', 'permissive', or 'disabled'
+        selinux_policy:        — 'targeted' (default) or 'mls'
+        selinux_reboot_ok:     — Allow the role to reboot the host if needed
+                                 (required when going from disabled to enforcing)
+        selinux_booleans:      — List of SELinux booleans to set
+          - name: httpd_can_network_connect
+            state: 'on'
+            persistent: true
+        selinux_fcontexts:     — File context rules to add
+        selinux_ports:         — Port context assignments
+
+      Create /home/vagrant/ansible/selinux_role.yml:
+
+        ---
+        - name: Ensure SELinux enforcing on all lab hosts
+          hosts: lab
+          vars:
+            selinux_state: enforcing
+            selinux_policy: targeted
+          roles:
+            - fedora.linux_system_roles.selinux
+
+      If the nodes are already in enforcing mode (likely in this lab), the role
+      will confirm and make no changes (idempotent). If a node is in permissive
+      or disabled, the role will change the state and may trigger a reboot.
+
+      Run the playbook:
+        cd /home/vagrant/ansible
+        ansible-playbook selinux_role.yml
+
+      Verify:
+        ansible lab -m command -a getenforce
+        # All nodes should return: Enforcing
+
+      Tip: Partial credit IS given. Complete what you can, never leave a
+      task blank. If SELinux is already enforcing, this task is essentially
+      free points — a well-written playbook that confirms enforcing mode is
+      already correct automation.
+    checks:
+      - id: "4.1"
+        description: "selinux_role.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/selinux_role.yml"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "selinux_role.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check selinux_role.yml"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "SELinux is Enforcing on node1"
+        node: node1
+        command: "getenforce"
+        expect_stdout: "Enforcing"
+
+  # ── Task 5: Create a Collections Requirements File ──
+  - id: "5"
+    title: "Create a Collections Requirements File"
+    points: 1
+    description: |
+      Just as roles have requirements.yml, collections have their own
+      requirements file. The format is slightly different from roles.
+
+      Collections requirements.yml format:
+
+        ---
+        collections:
+          - name: ansible.posix
+            version: ">=1.3.0"        # optional version constraint
+
+          - name: community.general
+            version: "*"              # latest version
+
+          - name: fedora.linux_system_roles
+            # no version = latest
+
+      You can also mix roles and collections in the same file:
+
+        ---
+        roles:
+          - name: geerlingguy.firewall
+
+        collections:
+          - name: ansible.posix
+          - name: community.general
+
+      Install from a requirements file:
+        ansible-galaxy collection install -r collections/requirements.yml \
+          -p /home/vagrant/ansible/collections
+
+      Tip: Install collections with ansible-galaxy collection install
+      <name> -p collections/ — do this early in the exam. Collections take
+      time to download and install. If you install them first while reading
+      other tasks, they will be ready when you need them.
+
+      Tip: On the exam, read ALL tasks first. Some build on each other.
+      If you see tasks requiring collections or system roles, install them
+      IMMEDIATELY as your first action after setting up ansible.cfg.
+
+      Create /home/vagrant/ansible/collections/requirements.yml:
+
+        ---
+        collections:
+          - name: ansible.posix
+          - name: community.general
+
+      Then install them:
+        ansible-galaxy collection install \
+          -r /home/vagrant/ansible/collections/requirements.yml \
+          -p /home/vagrant/ansible/collections
+
+      Useful ansible-galaxy collection commands:
+        ansible-galaxy collection install <name>          — Install a collection
+        ansible-galaxy collection install -r req.yml     — Install from file
+        ansible-galaxy collection list                   — List installed collections
+        ansible-galaxy collection verify <name>          — Verify integrity
+        ansible-galaxy collection init <namespace.name>  — Scaffold a new collection
+    checks:
+      - id: "5.1"
+        description: "collections/requirements.yml exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/collections/requirements.yml"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "requirements.yml lists ansible.posix"
+        node: control
+        command: "grep -q 'ansible.posix' /home/vagrant/ansible/collections/requirements.yml"
+        expect_rc: 0

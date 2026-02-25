@@ -1,0 +1,110 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+CONTROL_NODE = "control"
+WORKERS = ["node1", "node2", "node3"]
+# Using VMware NAT subnet (vmnet8) - static IPs below DHCP range
+NETWORK_PREFIX = "192.168.162"
+
+Vagrant.configure("2") do |config|
+  # AlmaLinux 9 = 1:1 RHEL 9 clone, arm64 build for Apple Silicon
+  config.vm.box = "bento/almalinux-9"
+
+  # VMware Fusion for Apple Silicon
+  config.vm.provider "vmware_desktop" do |v|
+    v.memory = 1024
+    v.cpus = 1
+  end
+
+  # ── Worker Nodes (must come up first so control can push SSH keys) ──
+  WORKERS.each_with_index do |name, index|
+    config.vm.define name do |node|
+      node.vm.hostname = "#{name}.lab.local"
+      node.vm.synced_folder ".", "/vagrant", disabled: true
+
+      node.vm.provider "vmware_desktop" do |v|
+        v.memory = 512
+        v.vmx["displayName"] = "rhce-#{name}"
+      end
+
+      node.vm.provision "shell", inline: <<-SHELL
+        # Add a static IP alias on the primary interface for lab communication
+        DEVICE=$(nmcli -t -f DEVICE device status | grep -v '^lo$' | head -1)
+        nmcli con mod "Wired connection 1" +ipv4.addresses #{NETWORK_PREFIX}.#{20 + index}/24
+        nmcli con up "Wired connection 1"
+
+        dnf install -y python3
+        # Enable password auth so control node can push SSH keys via sshpass
+        sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+        systemctl restart sshd
+      SHELL
+    end
+  end
+
+  # ── Ansible Control Node ──
+  config.vm.define CONTROL_NODE, primary: true do |ctrl|
+    ctrl.vm.hostname = "control.lab.local"
+    ctrl.vm.synced_folder ".", "/vagrant", disabled: true
+
+    ctrl.vm.provider "vmware_desktop" do |v|
+      v.memory = 2048
+      v.vmx["displayName"] = "rhce-control"
+    end
+
+    ctrl.vm.provision "shell", inline: <<-SHELL
+      # Add a static IP alias on the primary interface for lab communication
+      DEVICE=$(nmcli -t -f DEVICE device status | grep -v '^lo$' | head -1)
+      nmcli con mod "Wired connection 1" +ipv4.addresses #{NETWORK_PREFIX}.10/24
+      nmcli con up "Wired connection 1"
+
+      dnf install -y epel-release
+      dnf install -y ansible-core python3-pip sshpass vim tree
+
+      # Generate SSH keypair for vagrant user
+      sudo -u vagrant bash -c '
+        if [ ! -f ~/.ssh/id_rsa ]; then
+          ssh-keygen -t rsa -b 2048 -f ~/.ssh/id_rsa -N ""
+        fi
+      '
+
+      # Push SSH key to all worker nodes
+      for ip in #{WORKERS.each_with_index.map { |_, i| "#{NETWORK_PREFIX}.#{20 + i}" }.join(' ')}; do
+        sudo -u vagrant sshpass -p vagrant ssh-copy-id -o StrictHostKeyChecking=no vagrant@${ip}
+      done
+
+      # Create /etc/hosts entries
+      echo "#{NETWORK_PREFIX}.10  control control.lab.local" >> /etc/hosts
+      #{WORKERS.each_with_index.map { |name, i| "echo \"#{NETWORK_PREFIX}.#{20 + i}  #{name} #{name}.lab.local\" >> /etc/hosts" }.join("\n      ")}
+
+      # Create Ansible inventory
+      mkdir -p /home/vagrant/ansible
+      cat > /home/vagrant/ansible/inventory <<EOF
+[control]
+control.lab.local ansible_connection=local
+
+[workers]
+#{WORKERS.each_with_index.map { |name, i| "#{name}.lab.local ansible_host=#{NETWORK_PREFIX}.#{20 + i}" }.join("\n")}
+
+[all:vars]
+ansible_user=vagrant
+ansible_ssh_private_key_file=/home/vagrant/.ssh/id_rsa
+EOF
+
+      # Create a basic ansible.cfg
+      cat > /home/vagrant/ansible/ansible.cfg <<EOF
+[defaults]
+inventory = /home/vagrant/ansible/inventory
+remote_user = vagrant
+host_key_checking = False
+
+[privilege_escalation]
+become = True
+become_method = sudo
+become_user = root
+become_ask_pass = False
+EOF
+
+      chown -R vagrant:vagrant /home/vagrant/ansible
+    SHELL
+  end
+end

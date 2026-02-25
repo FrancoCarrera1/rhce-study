@@ -1,0 +1,72 @@
+/* Examiner TUI layout */
+
+Screen {
+    layout: vertical;
+}
+
+#status-bar {
+    dock: top;
+    height: 3;
+    padding: 0 2;
+    background: $surface;
+    layout: horizontal;
+}
+
+#status-title {
+    width: 1fr;
+    content-align: left middle;
+    padding: 1 1;
+}
+
+#status-timer {
+    width: auto;
+    min-width: 20;
+    content-align: center middle;
+    padding: 1 2;
+}
+
+#status-score {
+    width: auto;
+    min-width: 30;
+    content-align: right middle;
+    padding: 1 1;
+}
+
+#main-content {
+    layout: horizontal;
+    height: 1fr;
+}
+
+#task-sidebar {
+    width: 35;
+    min-width: 30;
+    border-right: solid $primary;
+}
+
+#task-detail {
+    width: 1fr;
+    padding: 1 2;
+}
+
+#task-title {
+    margin-bottom: 1;
+}
+
+#task-description {
+    margin-bottom: 1;
+}
+
+#results-header {
+    margin-top: 1;
+}
+
+#results-log {
+    height: 1fr;
+    margin-top: 1;
+    border: round $surface-lighten-2;
+    padding: 0 1;
+}
+
+Footer {
+    dock: bottom;
+}

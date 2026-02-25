@@ -1,0 +1,7 @@
+- name: Create User greg for Exam Environment
+  hosts: localhost
+  tasks:
+  - name: Create greg user and home dir
+    user: 
+      name: greg
+      state: present

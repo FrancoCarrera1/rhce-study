@@ -1,0 +1,307 @@
+---
+id: lesson03_first_playbook
+title: "Lesson 3: Your First Playbook"
+duration: 3600
+passing_score: 100
+
+hosts:
+  control:
+    hostname: control.lab.local
+    ip: "192.168.56.10"
+    ssh_user: vagrant
+    groups: [control]
+  node1:
+    hostname: node1.lab.local
+    ip: "192.168.56.20"
+    ssh_user: vagrant
+    groups: [workers]
+  node2:
+    hostname: node2.lab.local
+    ip: "192.168.56.21"
+    ssh_user: vagrant
+    groups: [workers]
+  node3:
+    hostname: node3.lab.local
+    ip: "192.168.56.22"
+    ssh_user: vagrant
+    groups: [workers]
+  node4:
+    hostname: node4.lab.local
+    ip: "192.168.56.23"
+    ssh_user: vagrant
+    groups: [workers]
+  node5:
+    hostname: node5.lab.local
+    ip: "192.168.56.24"
+    ssh_user: vagrant
+    groups: [workers]
+
+tasks:
+  # ── Task 1: Create a Simple Playbook ──
+  - id: "1"
+    title: "Create a Simple Playbook"
+    points: 1
+    description: |
+      A playbook is a YAML file that defines one or more plays. Each play
+      targets a group of hosts and runs a list of tasks. The basic structure
+      is a YAML list (starting with ---) where each play has at minimum:
+        hosts: <pattern>
+        tasks:
+          - name: <human readable description>
+            <module_name>: <arguments>
+
+      Create /home/vagrant/ansible/hello.yml with this content:
+        ---
+        - name: Hello World playbook
+          hosts: all
+          tasks:
+            - name: Print a greeting
+              ansible.builtin.debug:
+                msg: "Hello from Ansible"
+
+      The ansible.builtin.debug module prints messages without touching the
+      remote host — useful for testing variable values and confirming logic.
+      Always start with --- (the YAML document start marker).
+
+      Tip: YAML uses 2-space indentation. Indentation errors are the #1
+      cause of failures. The tasks: list is indented 2 spaces under the play,
+      and each task's module is indented 2 more spaces under the task name.
+
+      Validate with: cd /home/vagrant/ansible && ansible-playbook --syntax-check hello.yml
+    checks:
+      - id: "1.1"
+        description: "hello.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/hello.yml"
+        expect_rc: 0
+
+      - id: "1.2"
+        description: "hello.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check hello.yml"
+        expect_rc: 0
+
+  # ── Task 2: Install a Package with a Playbook ──
+  - id: "2"
+    title: "Install a Package with a Playbook"
+    points: 1
+    description: |
+      The ansible.builtin.dnf module manages packages on RPM-based systems
+      (RHEL, AlmaLinux, Rocky Linux). It is the recommended module for RHEL 9
+      — prefer it over the older yum module on modern systems.
+
+      Create /home/vagrant/ansible/install_tree.yml:
+        ---
+        - name: Install tree on all lab hosts
+          hosts: lab
+          tasks:
+            - name: Install tree package
+              ansible.builtin.dnf:
+                name: tree
+                state: present
+
+      The state parameter controls the desired outcome:
+        - present: install if not already installed (idempotent)
+        - latest:  install or upgrade to the newest version
+        - absent:  remove the package if installed
+
+      Run it with: cd /home/vagrant/ansible && ansible-playbook install_tree.yml
+
+      Tip: Always use FQCNs (ansible.builtin.dnf not just dnf). This
+      ensures the correct collection's module is used and avoids ambiguity
+      when multiple collections provide modules with the same short name.
+    checks:
+      - id: "2.1"
+        description: "install_tree.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/install_tree.yml"
+        expect_rc: 0
+
+      - id: "2.2"
+        description: "install_tree.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check install_tree.yml"
+        expect_rc: 0
+
+      - id: "2.3"
+        description: "tree is installed on node1"
+        node: node1
+        command: "rpm -q tree"
+        expect_rc: 0
+
+  # ── Task 3: Create a File with a Playbook ──
+  - id: "3"
+    title: "Create a File with a Playbook"
+    points: 1
+    description: |
+      The ansible.builtin.copy module has two main operating modes:
+        - src: copy a file from the control node to the managed node
+        - content: write a literal string directly to a file on the managed node
+
+      Using content: is ideal when you want to create small configuration
+      snippets without maintaining a separate source file on the control node.
+
+      Create /home/vagrant/ansible/create_file.yml:
+        ---
+        - name: Create a managed file on lab hosts
+          hosts: lab
+          tasks:
+            - name: Create /tmp/managed-by-ansible.txt
+              ansible.builtin.copy:
+                content: "This file is managed by Ansible\n"
+                dest: /tmp/managed-by-ansible.txt
+                mode: '0644'
+
+      Run it, then verify the file was created:
+        ansible lab -m command -a "cat /tmp/managed-by-ansible.txt"
+
+      Tip: Run ansible-playbook --syntax-check before running. A missing
+      colon or wrong indentation is invisible to the eye but breaks execution.
+    checks:
+      - id: "3.1"
+        description: "create_file.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/create_file.yml"
+        expect_rc: 0
+
+      - id: "3.2"
+        description: "create_file.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check create_file.yml"
+        expect_rc: 0
+
+      - id: "3.3"
+        description: "/tmp/managed-by-ansible.txt exists on node1"
+        node: node1
+        command: "test -f /tmp/managed-by-ansible.txt"
+        expect_rc: 0
+
+      - id: "3.4"
+        description: "/tmp/managed-by-ansible.txt contains expected content on node1"
+        node: node1
+        command: "grep -q 'managed by Ansible' /tmp/managed-by-ansible.txt"
+        expect_rc: 0
+
+  # ── Task 4: Multiple Tasks in One Playbook ──
+  - id: "4"
+    title: "Multiple Tasks in One Playbook"
+    points: 1
+    description: |
+      A single play can contain many tasks, and Ansible executes them in order
+      from top to bottom. This is the fundamental mechanism for expressing
+      multi-step configurations: install a package, then create a directory,
+      then deploy a configuration file — in exactly that sequence, on every
+      host in the play's target group simultaneously.
+
+      Create /home/vagrant/ansible/multi_task.yml:
+        ---
+        - name: Multi-task configuration playbook
+          hosts: lab
+          tasks:
+            - name: Install vim-enhanced
+              ansible.builtin.dnf:
+                name: vim-enhanced
+                state: present
+
+            - name: Create /opt/ansible-lab directory
+              ansible.builtin.file:
+                path: /opt/ansible-lab
+                state: directory
+                mode: '0755'
+
+            - name: Create README inside the directory
+              ansible.builtin.copy:
+                content: "Ansible Lab Directory\n"
+                dest: /opt/ansible-lab/README.txt
+                mode: '0644'
+
+      The ansible.builtin.file module with state: directory creates the
+      directory (and any missing parents with recurse: true). Think of it as
+      the Ansible equivalent of mkdir -p.
+
+      Tip: Use --check --diff for dry runs. This shows what WOULD change
+      without making any actual changes: ansible-playbook --check --diff multi_task.yml
+    checks:
+      - id: "4.1"
+        description: "multi_task.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/multi_task.yml"
+        expect_rc: 0
+
+      - id: "4.2"
+        description: "multi_task.yml passes syntax check"
+        node: control
+        command: "cd /home/vagrant/ansible && ansible-playbook --syntax-check multi_task.yml"
+        expect_rc: 0
+
+      - id: "4.3"
+        description: "vim-enhanced is installed on node1"
+        node: node1
+        command: "rpm -q vim-enhanced"
+        expect_rc: 0
+
+      - id: "4.4"
+        description: "/opt/ansible-lab directory exists on node1"
+        node: node1
+        command: "test -d /opt/ansible-lab"
+        expect_rc: 0
+
+      - id: "4.5"
+        description: "/opt/ansible-lab/README.txt exists on node1"
+        node: node1
+        command: "test -f /opt/ansible-lab/README.txt"
+        expect_rc: 0
+
+  # ── Task 5: Use ansible-doc ──
+  - id: "5"
+    title: "Use ansible-doc"
+    points: 1
+    description: |
+      ansible-doc is your built-in manual for every installed module. In a
+      timed assessment you have NO internet access, so ansible-doc is essential. Use
+      it to find parameter names, valid values, and working examples:
+        ansible-doc ansible.builtin.file
+
+      Key parameters of ansible.builtin.file:
+        path:  the file or directory to manage
+        state: file | directory | link | absent | touch | hard
+        mode:  permissions in octal string form e.g. '0755'
+        owner: username that should own the path
+        group: group that should own the path
+
+      Create /home/vagrant/ansible/directory.yml:
+        ---
+        - name: Create a managed directory with permissions
+          hosts: lab
+          tasks:
+            - name: Create /opt/testdir with correct ownership and mode
+              ansible.builtin.file:
+                path: /opt/testdir
+                state: directory
+                mode: '0755'
+                owner: vagrant
+                group: vagrant
+
+      Run it, then verify: stat /opt/testdir on node1 should show 0755 and
+      owner vagrant.
+
+      Tip: Use ansible-doc <module> to look up parameters. Press q to
+      quit, / to search within the man page. ansible-doc -l lists all modules.
+    checks:
+      - id: "5.1"
+        description: "directory.yml playbook exists on control"
+        node: control
+        command: "test -f /home/vagrant/ansible/directory.yml"
+        expect_rc: 0
+
+      - id: "5.2"
+        description: "/opt/testdir exists on node1"
+        node: node1
+        command: "test -d /opt/testdir"
+        expect_rc: 0
+
+      - id: "5.3"
+        description: "/opt/testdir has mode 755 on node1"
+        node: node1
+        command: "stat -c '%a' /opt/testdir"
+        expect_stdout: "755"

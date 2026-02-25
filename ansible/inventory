@@ -1,0 +1,13 @@
+[webservers]
+node1
+node2
+[dbservers]
+node3
+node4
+
+[lab:children]
+webservers
+dbservers
+
+[all:vars]
+ansible_user=vagrant
